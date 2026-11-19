@@ -14,6 +14,8 @@
 }
 
 * { box-sizing: border-box; }
+/* display:flex/grid das classes não pode vencer o atributo hidden */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -23,7 +25,7 @@ body {
 }
 
 h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
-.lead { color: var(--muted); margin: 0 0 24px; max-width: 56ch; }
+.lead { color: var(--muted); margin: 0 0 24px; }
 .hint { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
 .opt { color: var(--muted); font-weight: 400; font-size: 13px; }
 
@@ -65,13 +67,13 @@ h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
 
 /* ---------- layout ---------- */
 .topbar { display: none; }
-main { margin-left: var(--sidebar-w); padding: 40px 40px 80px; max-width: calc(var(--sidebar-w) + 860px); }
+main { margin-left: var(--sidebar-w); padding: 40px 40px 80px; min-height: 100vh; }
 .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 20; }
 
 /* ---------- forms ---------- */
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
-  padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 620px;
+  padding: 24px; display: flex; flex-direction: column; gap: 18px;
 }
 .card + .card { margin-top: 20px; }
 form { display: flex; flex-direction: column; gap: 18px; }
@@ -131,7 +133,7 @@ details[open] summary { margin-bottom: 12px; }
 .meter div { height: 100%; width: 0; background: var(--pink); transition: width 0.4s; }
 
 /* ---------- fila ---------- */
-.list { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
+.list { display: flex; flex-direction: column; gap: 12px; }
 .job {
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
   padding: 16px 18px; display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; align-items: center;
@@ -146,7 +148,7 @@ details[open] summary { margin-bottom: 12px; }
 
 .empty {
   border: 1px dashed var(--line); border-radius: 14px; padding: 32px 24px;
-  color: var(--muted); text-align: center; max-width: 720px; grid-column: 1 / -1;
+  color: var(--muted); text-align: center; grid-column: 1 / -1;
 }
 .empty a { color: var(--pink); }
 
@@ -166,6 +168,13 @@ dialog { background: var(--panel); border: 1px solid var(--line); border-radius:
 dialog::backdrop { background: rgba(0, 0, 0, 0.8); }
 dialog video { display: block; max-height: 76vh; max-width: min(86vw, 420px); border-radius: 10px; margin-bottom: 12px; background: #000; }
 dialog .btn { width: 100%; }
+
+/* telas largas: título e crédito lado a lado, ajuste da câmera embaixo */
+@media (min-width: 1000px) {
+  .shared-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 14px; }
+  .shared-fields details { grid-column: 1 / -1; }
+  .card .btn.primary[type=submit] { align-self: flex-start; min-width: 240px; }
+}
 
 /* ---------- mobile: menu lateral vira gaveta ---------- */
 @media (max-width: 800px) {
