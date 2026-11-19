@@ -83,7 +83,7 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
 - [x] Deploy por Docker (Coolify): `Dockerfile` e `docker-compose.yml`
 - [ ] Contas por usuário (hoje é uma senha única)
 - [x] Notificação no celular quando um clip fica pronto (Web Push)
-- [x] Clips apagados sozinhos após 1 hora (`VICECLIPS_CLIP_TTL_MINUTES`)
+- [x] Clips apagados sozinhos após 20 minutos (`VICECLIPS_CLIP_TTL_MINUTES`)
 - [x] Avaliação 👍/👎 por clip, guardada para calibrar os limiares
 - [x] Avaliações ajustam a exigência dos clips automáticos (a partir de 15 avaliações)
 - [x] Favoritos (não são apagados) e download de vários clips em .zip

@@ -5,6 +5,7 @@ aparece um momento, espera a reação esfriar e pede o corte. Se houver chat da
 Twitch, ele reforça a nota, ajuda a classificar e também dispara clips sozinho
 quando explode sem o áudio ter subido (o streamer rindo baixo, por exemplo).
 """
+import os
 import subprocess
 import threading
 import time
@@ -21,6 +22,10 @@ from .rate import SENSITIVITY, RateController
 WARMUP = analysis.WARMUP
 COOLDOWN = 45        # intervalo mínimo entre dois clips automáticos
 NEAR_MISS = 3.0       # dB: descarte que chegou a isso da régua aparece na Atividade
+# Segundos de live que precisam passar depois do momento antes de cortar, para pegar o
+# momento inteiro (a reação, o desfecho) e não cortar no meio.
+WAIT_AFTER = min(180, max(15, int(os.environ.get("VICECLIPS_WAIT_AFTER_SECONDS", "60"))))
+MAX_AFTER = 45        # o clip vai até a reação esfriar, no máximo este tanto depois do pico
 BUDGET_WINDOW = 1800  # trava de segurança: em meia hora...
 BUDGET_MAX = 10       # ...nunca mais que isto, aconteça o que acontecer
 HISTORY = 600        # segundos de medidas mantidos em memória
@@ -30,7 +35,7 @@ CHAT_LAG = 6         # o chat reage alguns segundos depois do que aconteceu
 
 
 class LiveWatcher(threading.Thread):
-    """Chama on_highlight(segundos_a_cortar, tipo, nota) a cada momento encontrado."""
+    """Chama on_highlight(duração, tipo, nota, terminou_há) a cada momento encontrado."""
 
     def __init__(self, buffer_dir: Path, on_highlight, chat: ChatMeter | None = None,
                  poll: float = 3.0, on_event=None):
@@ -104,10 +109,10 @@ class LiveWatcher(threading.Thread):
         if s["score"][best] > self.pending["score"]:
             self.pending.update(peak=best + self.offset, score=float(s["score"][best]))
             peak = best
-        if not analysis.reaction_over(s, peak):
-            return
+        if len(self.feats) < peak + WAIT_AFTER:
+            return                                     # ainda não passou tempo suficiente depois do momento
 
-        start, _ = analysis.window(s, peak)
+        start, end = analysis.window(s, peak, max_after=min(MAX_AFTER, WAIT_AFTER - 5))
         kind = analysis.classify(s, peak) if self.pending["audio"] else self.pending["kind"]
         score = self.pending["score"]
         burst = self._chat_burst(self.pending["peak"])
@@ -139,8 +144,9 @@ class LiveWatcher(threading.Thread):
         self.last_trigger = moment
         self.recent.append((moment, score))
         self.peak_lift = 0.0
-        self.on_event(f"Momento {kind} encontrado (nota {score:.1f}): cortando o clip", "ok")
-        self.on_highlight(float(len(self.feats) - start), kind, round(score, 1))
+        self.on_event(f"Momento {kind} encontrado (nota {score:.1f}): cortando um clip de {end - start} s", "ok")
+        # O clip vai do começo do momento até a reação esfriar; `ago` diz há quanto tempo isso foi.
+        self.on_highlight(float(end - start), kind, round(score, 1), float(len(self.feats) - end))
         self.clips += 1
 
     def _within_budget(self, moment: int, score: float) -> bool:

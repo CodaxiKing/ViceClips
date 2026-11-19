@@ -47,7 +47,7 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
 - **Servidor**: disco, processador, memória, fila, tempo por clip e erros recentes.
 - **Meus clips**: assistir, baixar (um ou todos em .zip), favoritar (★ não é apagado),
   avaliar (👍/👎), publicar e excluir. Cada clip é apagado sozinho
-  1 hora depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
+  20 minutos depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
 
 Os clips saem com legenda palavra por palavra (a palavra falada fica em rosa), feita por
 transcrição local, sem API. Só a fala do streamer é legendada: o diálogo do jogo, em
@@ -56,11 +56,12 @@ celular quando um clip fica pronto.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `VICECLIPS_CLIP_TTL_MINUTES` | `60` | minutos até apagar um clip pronto (`0` = nunca) |
+| `VICECLIPS_CLIP_TTL_MINUTES` | `20` | minutos até apagar um clip pronto (`0` = nunca) |
 | `VICECLIPS_CAPTIONS` | `1` | `0` desliga as legendas |
 | `VICECLIPS_CAPTION_LANG` | `pt` | idioma do streamer; só fala nesse idioma vira legenda (vazio = legenda tudo) |
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
 | `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo (cada uma sem limite de tempo) |
+| `VICECLIPS_WAIT_AFTER_SECONDS` | `60` | segundos de live esperados depois do momento antes de cortar o clip automático |
 | `VICECLIPS_BUFFER_MINUTES` | `30` | minutos de cada live guardados para voltar atrás (2 a 90) |
 | `VICECLIPS_LOGO_OPACITY` | `0.7` | opacidade da logo do canal nos clips (`0` tira a logo) |
 

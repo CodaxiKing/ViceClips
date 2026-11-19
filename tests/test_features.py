@@ -507,3 +507,15 @@ def test_live_status_shows_how_long_it_has_been_followed(fake_record):
     client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
     session = client.get("/api/live").json()["sessions"][0]
     assert session["running"] and session["uptime"] >= 0 and session["needed"] == 16.0   # aprendendo: valor inicial
+
+
+def test_push_test_needs_a_subscribed_device(monkeypatch):
+    sent = []
+    monkeypatch.setattr(push, "notify", lambda title, body, url="/#clips": sent.append(title))
+    assert client.post("/api/push/test").status_code == 409            # ninguém ativou avisos ainda
+    push.subscribe("https://fcm.googleapis.com/fcm/send/a", "p", "a", "https://site")
+    assert client.post("/api/push/test").json() == {"devices": 1} and sent == ["Teste do ViceClips"]
+
+
+def test_clips_expire_after_twenty_minutes_by_default():
+    assert web.CLIP_TTL == 20 * 60

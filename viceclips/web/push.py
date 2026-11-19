@@ -20,6 +20,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .. import config
+from . import activity
 
 # Só os serviços de push dos navegadores: o servidor não deve postar em URL arbitrária.
 PUSH_HOSTS = ("fcm.googleapis.com", ".push.services.mozilla.com", ".push.apple.com",
@@ -151,7 +152,11 @@ def notify(title: str, body: str, url: str = "/#clips") -> None:
     def work() -> None:
         payload = json.dumps({"title": title, "body": body, "url": url}).encode()
         for sub in subs:
-            if _send_one(sub, payload) in (404, 410):   # inscrição expirou ou foi revogada
+            code = _send_one(sub, payload)
+            if code in (404, 410):          # inscrição expirou ou foi revogada
                 unsubscribe(sub["endpoint"])
+                activity.log("Um aparelho deixou de receber avisos (a inscrição venceu); ative de novo nele", "warn")
+            elif code not in (200, 201, 202):
+                activity.log(f"Aviso no celular não foi entregue (resposta {code or 'sem conexão'})", "warn")
 
     threading.Thread(target=work, daemon=True).start()

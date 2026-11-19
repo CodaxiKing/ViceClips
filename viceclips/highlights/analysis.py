@@ -118,14 +118,17 @@ def classify(s: dict, peak: int) -> str:
     return FUNNY if laughing >= 3 else IMPACT
 
 
-def window(s: dict, peak: int) -> tuple[int, int]:
-    """Início numa pausa da fala antes do momento; fim quando a reação esfria."""
+def window(s: dict, peak: int, max_after: int = 15) -> tuple[int, int]:
+    """Início numa pausa da fala antes do momento; fim quando a reação esfria.
+
+    `max_after` é até onde o fim pode ir depois do pico, se a reação não esfriar antes.
+    """
     level, n = s["level"], len(s["level"])
     lo, hi = max(0, peak - 25), max(0, peak - 12)
     start = lo + int(np.argmin(level[lo:hi])) if hi > lo else lo
-    end = min(n, peak + 15)
+    end = min(n, peak + max_after)
     calm = level < s["baseline"] + 3.0
-    for t in range(peak + 5, min(n - 1, peak + 15)):
+    for t in range(peak + 5, min(n - 1, peak + max_after)):
         if calm[t] and calm[t + 1]:
             end = t + 1
             break

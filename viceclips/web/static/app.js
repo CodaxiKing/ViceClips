@@ -203,7 +203,7 @@ function renderLive(live) {
       watch.textContent = session.analysed < 60
         ? `Vigia: aprendendo o volume normal desta live (${session.analysed} de 60 s).`
         : session.waiting
-          ? "Vigia: pegou um momento, esperando a reação terminar para cortar."
+          ? "Vigia: pegou um momento. Espera cerca de 1 minuto para capturar o momento inteiro antes de cortar."
           : `Vigia: ${clock(session.analysed)} analisados · som agora ${sign(session.lift)} em relação ao normal · maior pico recente ${sign(session.peak_lift)} · nesta live, vira clip a partir de ${sign(session.needed)} (ajustado para ~${session.per_hour} por hora).`;
     }
     for (const option of $$("select[name=ago] option", card)) {
@@ -600,9 +600,21 @@ async function setupPush() {
     const on = await registration.pushManager.getSubscription();
     button.textContent = on ? "🔔 Avisos ativados" : "🔔 Ativar avisos";
     button.classList.toggle("on", Boolean(on));
+    $("#push-test").hidden = !on;
+    $("#push-banner").hidden = Boolean(on) || Notification.permission === "denied";
   };
   button.hidden = false;
   await label();
+  $("#push-banner-btn").addEventListener("click", () => button.click());
+  $("#push-test").addEventListener("click", async () => {
+    note.hidden = false;
+    try {
+      const { devices } = await api("/api/push/test", { method: "POST" });
+      note.textContent = `Aviso de teste enviado para ${devices} aparelho${devices === 1 ? "" : "s"}. Deve chegar em segundos.`;
+    } catch (exc) {
+      note.textContent = exc.message;
+    }
+  });
   button.addEventListener("click", async () => {
     note.hidden = true;
     try {

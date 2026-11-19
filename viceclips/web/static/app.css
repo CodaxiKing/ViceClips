@@ -277,3 +277,10 @@ textarea { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px sol
 @media (max-width: 800px) { .now { margin-top: 0; } .event { grid-template-columns: 18px 64px 1fr; font-size: 13px; } }
 
 select { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }
+
+/* ---------- convite para ativar avisos ---------- */
+.push-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; justify-content: space-between;
+  margin: -16px 0 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--pink); background: var(--pink-soft); font-size: 14px; }
+.push-banner + .now { margin-top: 0; }
+#push-test { margin: 0 12px 8px; }
+@media (max-width: 800px) { .push-banner { margin-top: 0; } }

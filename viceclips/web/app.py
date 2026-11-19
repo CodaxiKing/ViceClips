@@ -42,7 +42,7 @@ from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession, sensit
 STATIC = Path(__file__).parent / "static"
 CLIP_NAME = re.compile(r"^clip_[0-9a-z_]+$")
 # Minutos até um clip pronto ser apagado; 0 guarda para sempre.
-CLIP_TTL = int(os.environ.get("VICECLIPS_CLIP_TTL_MINUTES", "60")) * 60
+CLIP_TTL = int(os.environ.get("VICECLIPS_CLIP_TTL_MINUTES", "20")) * 60
 STALE_WORK_SECONDS = 2 * 3600      # sobras de processamento interrompido
 PASSWORD = os.environ.get("VICECLIPS_PASSWORD", "")
 SESSION_COOKIE = "viceclips_session"
@@ -794,6 +794,15 @@ def push_subscribe(req: PushSubscription, request: Request) -> dict:
     push.subscribe(req.endpoint, req.keys.p256dh, req.keys.auth, contact)
     push.notify("Avisos ativados", "Você será avisado aqui quando um clip ficar pronto.")
     return {"ok": True}
+
+
+@app.post("/api/push/test")
+def push_test() -> dict:
+    devices = len(push.subscriptions())
+    if not devices:
+        raise HTTPException(409, "Nenhum aparelho com avisos ativados. Toque em \"Ativar avisos\" primeiro.")
+    push.notify("Teste do ViceClips", "Se você está vendo isto, os avisos de clip pronto estão funcionando.")
+    return {"devices": devices}
 
 
 @app.post("/api/push/unsubscribe")

@@ -73,12 +73,12 @@ def feed_live(watcher: LiveWatcher, pcm: np.ndarray, chunk: int = 6) -> None:
 
 def test_live_watcher_clips_each_moment_once():
     found = []
-    watcher = LiveWatcher(None, lambda seconds, kind, score: found.append((watcher.total, seconds, kind)))
+    watcher = LiveWatcher(None, lambda seconds, kind, score, ago=0: found.append((watcher.total, seconds, kind)))
     feed_live(watcher, stream_with({100: scream(2), 104: scream(1), 200: laughter(6)}))
     assert [kind for _, _, kind in found] == [IMPACT, FUNNY]
     for now, seconds, _ in found:
-        assert 17 <= seconds <= 45                   # clip cobre o antes e o depois
-    assert 105 <= found[0][0] <= 125                 # cortou pouco depois do susto, não minutos depois
+        assert 17 <= seconds <= 75                   # clip cobre o antes e o depois
+    assert 160 <= found[0][0] <= 175                 # esperou 1 minuto depois do susto para pegar o momento inteiro
 
 
 def test_live_watcher_stays_quiet_on_calm_stream():
@@ -92,7 +92,7 @@ def test_chat_burst_of_laughter_triggers_a_funny_clip(monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(time, "time", lambda: clock[0])
     meter, found = ChatMeter(), []
-    watcher = LiveWatcher(None, lambda seconds, kind, score: found.append(kind), chat=meter)
+    watcher = LiveWatcher(None, lambda seconds, kind, score, ago=0: found.append(kind), chat=meter)
     pcm = speech(240)
     for start in range(0, 240, 6):
         clock[0] = 1000.0 + start + 6

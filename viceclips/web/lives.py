@@ -75,9 +75,9 @@ class LiveSession:
             self.watcher.rate.per_hour = SENSITIVITY[sensitivity()]
             self.watcher.start()
 
-    def _highlight(self, seconds: float, kind: str, score: float) -> None:
+    def _highlight(self, seconds: float, kind: str, score: float, ago: float = 0.0) -> None:
         self.clip(min(seconds, MAX_CLIP_SECONDS),
-                  {"title": None, "credit": self.credit, "cam": None, "kind": kind, "score": score})
+                  {"title": None, "credit": self.credit, "cam": None, "kind": kind, "score": score}, ago)
 
     @property
     def running(self) -> bool:

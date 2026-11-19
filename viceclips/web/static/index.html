@@ -45,6 +45,7 @@
         <span class="dot warn" id="health-dot" hidden></span></a>
     </nav>
     <button class="btn ghost small" id="push-btn" hidden>🔔 Ativar avisos</button>
+    <button class="btn ghost small" id="push-test" hidden>Testar aviso</button>
     <p class="sidebar-note" id="push-note" hidden></p>
     <button class="btn ghost small" id="logout" hidden>Sair</button>
     <p class="sidebar-foot">Câmera em cima, gameplay embaixo, título no meio.</p>
@@ -52,6 +53,10 @@
 
   <main>
     <div class="alert" id="js-error" role="alert" hidden></div>
+    <div class="push-banner" id="push-banner" hidden>
+      <span>Receba um aviso no celular sempre que um clip ficar pronto.</span>
+      <button class="btn primary small" id="push-banner-btn">🔔 Ativar avisos</button>
+    </div>
     <a class="now" id="now" href="#atividade" hidden>
       <span class="now-dot"></span>
       <span class="now-text" id="now-text"></span>
