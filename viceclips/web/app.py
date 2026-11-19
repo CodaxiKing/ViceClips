@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
@@ -35,7 +35,7 @@ from ..highlights import calibration
 from ..ingest import vod
 from ..media import frame_jpeg, parse_time, probe
 from ..pipeline import NoStreamer, ai_titles_enabled, build_clip
-from . import publish, push
+from . import activity, publish, push
 from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession
 
 STATIC = Path(__file__).parent / "static"
@@ -181,7 +181,9 @@ def _submit(kind: str, label: str, params: dict, job_id: str | None = None) -> d
            "clips": [], "created": time.time()}
     with _lock:
         _jobs[job["id"]] = job
+        ahead = sum(j["status"] in ("fila", "processando") for j in _jobs.values()) - 1
     _save_jobs()
+    activity.log("Entrou na fila" + (f" ({ahead} na frente)" if ahead else ""), "info", label)
     _executor.submit(_run, job)
     return _public(job)
 
@@ -193,12 +195,16 @@ def _public(job: dict) -> dict:
 def _run(job: dict) -> None:
     job["status"], job["started"] = "processando", time.time()
     _save_jobs()
+    activity.log("Começou a processar", "info", job["label"])
     try:
         WORKERS[job["kind"]](job)
         job["status"], job["step"] = "pronto", "Pronto"
+        if not job["clips"]:
+            activity.log("Terminou sem gerar clip (o trecho não mostrava o streamer na câmera)", "warn", job["label"])
     except Exception as exc:
         job["status"], job["step"] = "erro", "Erro"
         job["error"] = str(exc)[-600:]
+        activity.log(f"Falhou: {job['error']}", "error", job["label"])
     job["finished"] = time.time()
     _save_jobs()
 
@@ -223,6 +229,7 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str, words: lis
     """
     def step(text: str) -> None:
         job["step"] = text
+        activity.log(text, "info", job["label"])
 
     out = config.OUT_DIR / f"{name}.mp4"
     cam = Rect.parse(opts["cam"]) if opts.get("cam") else None
@@ -234,6 +241,7 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str, words: lis
                                            words=words)
     except NoStreamer:
         src.unlink(missing_ok=True)
+        activity.log("Clip descartado: o streamer não aparece na câmera nesse trecho", "warn", job["label"])
         return False
     if detected:
         _known_cams[source] = detected     # mesma live, próxima vez: câmera no mesmo lugar
@@ -246,6 +254,7 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str, words: lis
         "duration": round(duration, 1), "created": time.time()}))
     job["clips"].append(name)
     src.unlink(missing_ok=True)   # o trecho bruto não é mais necessário
+    activity.log(f"Clip pronto ({round(duration)} s)" + (f": {title}" if title else ""), "ok", job["label"])
 
     what = {"engraçado": "Momento engraçado", "impactante": "Momento impactante"}.get(opts.get("kind"), "Clip")
     minutes = f" Fica disponível por {CLIP_TTL // 60} min." if CLIP_TTL else ""
@@ -332,10 +341,15 @@ def create_vod(req: VodRequest) -> dict:
         if not 0 < window[1] - window[0] <= MAX_CLIP_SECONDS:
             raise HTTPException(422, f"O trecho deve ter entre 1 e {MAX_CLIP_SECONDS} segundos.")
 
+    activity.log("Conferindo o link", "info", url)
     try:
         info = vod.probe(url)
     except RuntimeError as exc:
+        activity.log(str(exc), "error", url)
         raise HTTPException(422, str(exc))
+    activity.log("É uma live que está no ar: vou acompanhá-la ao vivo" if info["is_live"] else
+                 "É uma live gravada" + (f" de {round(info['duration'] / 60)} min" if info["duration"] else ""),
+                 "info", url)
     if info["is_live"]:
         # Link de live que está no ar: não há vídeo pronto para baixar; acompanha ao vivo.
         _start_live(url, auto=True, credit=opts["credit"])
@@ -368,6 +382,7 @@ def _work_vod(job: dict) -> None:
         job["step"] = f"Baixando áudio da live ({done * 100 // total}%)"
 
     job["step"] = "Baixando áudio da live"
+    activity.log("Baixando o áudio da live inteira para achar os momentos", "info", job["label"])
     audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a", progress)
     job["step"] = "Analisando a live inteira"
     # 1ª etapa: onde o som se destacou. Pega candidatos de sobra, do mais forte ao mais fraco.
@@ -376,6 +391,7 @@ def _work_vod(job: dict) -> None:
     audio.unlink(missing_ok=True)
     if not moments:
         raise RuntimeError("Não achei nenhum momento marcante nessa live; tente o modo por intervalo.")
+    activity.log(f"O áudio apontou {len(moments)} candidatos; vou avaliar cada um", "info", job["label"])
 
     # 2ª etapa: baixa cada candidato e olha o que ele mostra antes de escolher.
     candidates = []
@@ -383,13 +399,18 @@ def _work_vod(job: dict) -> None:
         job["step"] = f"Avaliando candidato {i} de {len(moments)}"
         raw = vod.download_section(url, moment.start, moment.end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
         cam = detect_webcam(str(raw))
+        at = f"{int(moment.peak // 3600)}:{int(moment.peak % 3600 // 60):02d}:{int(moment.peak % 60):02d}"
         if cam is None:           # abertura, intervalo, "já volto": sem streamer não há clip
             raw.unlink(missing_ok=True)
+            activity.log(f"Candidato {i} ({at}) descartado: sem o streamer na câmera", "warn", job["label"])
             continue
         words = _words(str(raw))
         seen = rerank.visual(str(raw), cam)
         rank = rerank.final_score(moment.score, seen, rerank.speech(words), bool(words))
         candidates.append({"rank": rank, "raw": raw, "cam": cam, "words": words, "moment": moment, "index": i})
+        activity.log(f"Candidato {i} ({at}): nota {rank}" + (" · tela parada" if seen["static"] else "")
+                     + (" · streamer agitado" if seen["reaction"] > 0.4 else "")
+                     + (" · fala de reação" if rerank.speech(words) > 0 else ""), "info", job["label"])
     candidates.sort(key=lambda c: -c["rank"])
     for loser in candidates[wanted:]:
         loser["raw"].unlink(missing_ok=True)
@@ -839,9 +860,20 @@ def public_video(expires: int, token: str, name: str) -> FileResponse:
 # ---------- páginas ----------
 
 @app.get("/")
-def index(request: Request) -> FileResponse:
+def index(request: Request) -> HTMLResponse:
     page = "index.html" if _authed(request) else "login.html"
-    return FileResponse(STATIC / page, headers={"Cache-Control": "no-store"})
+    html = (STATIC / page).read_text(encoding="utf-8")
+    # Cada arquivo leva a sua versão no endereço: depois de uma atualização o navegador é
+    # obrigado a buscar o script e o estilo novos, nunca fica com a página nova e o script velho.
+    for asset in ("app.js", "app.css"):
+        version = int((STATIC / asset).stat().st_mtime)
+        html = html.replace(f"/static/{asset}", f"/static/{asset}?v={version}")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/activity")
+def activity_feed(after: int = 0) -> list[dict]:
+    return activity.recent(after)
 
 
 @app.get("/sw.js")

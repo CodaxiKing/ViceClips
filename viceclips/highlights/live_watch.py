@@ -31,7 +31,7 @@ class LiveWatcher(threading.Thread):
     """Chama on_highlight(segundos_a_cortar, tipo, nota) a cada momento encontrado."""
 
     def __init__(self, buffer_dir: Path, on_highlight, chat: ChatMeter | None = None,
-                 poll: float = 3.0):
+                 poll: float = 3.0, on_event=None):
         super().__init__(daemon=True)
         self.buffer_dir, self.on_highlight, self.chat, self.poll = buffer_dir, on_highlight, chat, poll
         self.feats = np.zeros((0, 3), np.float32)
@@ -40,6 +40,9 @@ class LiveWatcher(threading.Thread):
         self.last_trigger = -10**9
         self.pending: dict | None = None      # momento esperando a reação esfriar
         self.clips = 0
+        self.on_event = on_event or (lambda text, level="info": None)
+        self.lift = 0.0                       # dB acima do normal no último segundo analisado
+        self.peak_lift = 0.0                  # o maior desde o último clip
         self.recent: list[tuple[int, float]] = []  # (segundo, nota) dos clips recentes
         self.clock: list[tuple[int, float]] = []   # (segundo da live, relógio) para alinhar o chat
         self._seen: set[tuple[str, int]] = set()
@@ -73,12 +76,15 @@ class LiveWatcher(threading.Thread):
         if len(self.feats) < 12:
             return
         s = analysis.score(self.feats)
+        self.lift = float(s["lift"][-1])
+        self.peak_lift = max(self.peak_lift, float(s["lift"][-6:].max()))
 
         if self.pending is None:
             first = max(self.checked, WARMUP, self.last_trigger + COOLDOWN) - self.offset
             for i in range(max(first, 0), len(self.feats)):
                 if analysis.is_moment(s, i, analysis.MILD_LIFT):
                     self.pending = {"peak": i + self.offset, "score": float(s["score"][i]), "audio": True}
+                    self.on_event(f"Som subiu {s['lift'][i]:.0f} dB acima do normal; esperando a reação terminar")
                     break
             if self.pending is None:
                 self._chat_only_trigger()
@@ -114,11 +120,16 @@ class LiveWatcher(threading.Thread):
         self.pending = None
         # Som só um pouco acima do normal não basta sozinho: precisa do chat junto.
         if audio_only and not chat_reacted and s["lift"][peak] < analysis.MIN_LIFT:
+            self.on_event(f"Momento fraco descartado ({s['lift'][peak]:.0f} dB acima do normal; "
+                          f"precisa de {analysis.MIN_LIFT:.0f}, ou do chat reagindo junto)", "warn")
             return
         if not self._within_budget(moment, score):
+            self.on_event("Momento descartado: já saíram clips demais nesta meia hora e este não supera os anteriores", "warn")
             return
         self.last_trigger = moment
         self.recent.append((moment, score))
+        self.peak_lift = 0.0
+        self.on_event(f"Momento {kind} encontrado (nota {score:.1f}): cortando o clip", "ok")
         self.on_highlight(float(len(self.feats) - start), kind, round(score, 1))
         self.clips += 1
 

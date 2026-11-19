@@ -1,3 +1,13 @@
+// Qualquer erro do script aparece na tela: nada de clicar e "não acontecer nada".
+function showPageError(message) {
+  const box = document.getElementById("js-error");
+  if (!box) return;
+  box.textContent = `A página encontrou um erro (${message}). Recarregue; se continuar, me avise com essa mensagem.`;
+  box.hidden = false;
+}
+window.addEventListener("error", (event) => showPageError(event.message));
+window.addEventListener("unhandledrejection", (event) => showPageError(event.reason?.message || event.reason));
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -12,7 +22,12 @@ async function api(path, options = {}) {
     options.body = JSON.stringify(options.json);
     options.headers = { "Content-Type": "application/json" };
   }
-  const res = await fetch(path, options);
+  let res;
+  try {
+    res = await fetch(path, options);
+  } catch {
+    throw new Error("Sem resposta do servidor. Confira a conexão e tente de novo.");
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !path.startsWith("/api/login")) location.reload();
   if (!res.ok) {
@@ -23,7 +38,7 @@ async function api(path, options = {}) {
 }
 
 /* ---------- navegação ---------- */
-const PAGES = ["novo", "aovivo", "fila", "clips", "publicar", "servidor"];
+const PAGES = ["novo", "aovivo", "fila", "clips", "publicar", "atividade", "servidor"];
 
 function showPage() {
   const page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "novo";
@@ -165,6 +180,16 @@ function renderLive(live) {
     $(".live-auto", card).textContent = session.auto
       ? `Clip automático ligado${session.chat ? " (áudio + chat da Twitch)" : " (áudio)"} · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
       : "Clip automático desligado.";
+    const watch = $(".live-watch", card);
+    watch.hidden = !session.auto || !session.running;
+    if (session.auto) {
+      const sign = (n) => `${n >= 0 ? "+" : ""}${Math.round(n)} dB`;
+      watch.textContent = session.analysed < 60
+        ? `Vigia: aprendendo o volume normal desta live (${session.analysed} de 60 s).`
+        : session.waiting
+          ? "Vigia: pegou um momento, esperando a reação terminar para cortar."
+          : `Vigia: ${clock(session.analysed)} analisados · som agora ${sign(session.lift)} em relação ao normal · maior pico recente ${sign(session.peak_lift)} (dispara em +10 dB).`;
+    }
     $("button[type=submit]", card).hidden = session.buffered < 1;
     $(".live-stop", card).hidden = !session.running;
     $(".live-remove", card).hidden = session.running;
@@ -460,6 +485,38 @@ $("#player-close").addEventListener("click", closePlayer);
 $("#player").addEventListener("click", (event) => { if (event.target === $("#player")) closePlayer(); });
 
 /* ---------- atualização periódica ---------- */
+/* ---------- atividade ---------- */
+let lastActivity = 0;
+const ICONS = { info: "•", ok: "✓", warn: "!", error: "✕" };
+
+function hour(seconds) {
+  return new Date(seconds * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function renderActivity(events) {
+  const feed = $("#activity");
+  for (const event of events) {
+    lastActivity = Math.max(lastActivity, event.id);
+    feed.prepend(el("div", { className: `event ${event.level}` },
+      el("span", { className: "event-icon", textContent: ICONS[event.level] || "•" }),
+      el("span", { className: "event-time", textContent: hour(event.ts) }),
+      el("span", { className: "event-text" },
+        ...(event.source ? [el("b", { textContent: `${event.source.replace(/^https?:\/\//, "").slice(0, 40)}: ` })] : []),
+        event.text)));
+  }
+  while (feed.children.length > 200) feed.lastChild.remove();
+  if (!feed.children.length) {
+    feed.replaceChildren(el("p", { className: "hint empty-feed",
+      textContent: "Nada aconteceu ainda. Cole um link em Novo clip ou cadastre um canal em Ao vivo." }));
+  } else if (events.length) {
+    $(".empty-feed", feed)?.remove();
+    const last = events[events.length - 1];
+    $("#now").hidden = false;
+    $("#now").className = `now ${last.level}`;
+    $("#now-text").textContent = `${hour(last.ts)} · ${last.source ? `${last.source.replace(/^https?:\/\//, "").slice(0, 30)}: ` : ""}${last.text}`;
+  }
+}
+
 let refreshCount = 0;
 async function refresh() {
   // Cada parte se atualiza sozinha: se uma falhar, as outras telas continuam funcionando.
@@ -467,6 +524,7 @@ async function refresh() {
   const jobs = [
     load("/api/jobs", renderJobs), load("/api/live", renderLive),
     load("/api/clips", renderClips), load("/api/publish", renderPublish),
+    load(`/api/activity?after=${lastActivity}`, renderActivity),
   ];
   // O painel do servidor é mais pesado de calcular: só a cada 10 s, ou na hora se a tela está aberta.
   const onServerPage = location.hash === "#servidor";

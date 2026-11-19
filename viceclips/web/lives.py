@@ -16,11 +16,14 @@ from .. import config
 from ..highlights.chat import ChatMeter, TwitchChat, twitch_channel
 from ..highlights.live_watch import LiveWatcher
 from ..ingest import live, vod
+from . import activity
 
 MAX_LIVES = int(os.environ.get("VICECLIPS_MAX_LIVES", "4"))
 POLL_SECONDS = 90          # intervalo para conferir se os canais entraram ao vivo
 KEEP_ENDED_SECONDS = 600   # live manual encerrada some da tela depois disso
 MAX_CLIP_SECONDS = 180
+MAX_RECONNECTS = 30        # quedas do gravador toleradas numa mesma live
+SHORT_RUN = 20             # gravador que morre antes disso, 3 vezes seguidas, não tem conserto
 
 
 class LiveError(Exception):
@@ -42,14 +45,19 @@ class LiveSession:
         self.watcher: LiveWatcher | None = None
         self.chat: TwitchChat | None = None
         self._on_clip = on_clip
+        self._stopped = self._ended = self.failed = False
+        self.reconnects = self._short_runs = 0
         self.proc = live.record(url, self.dir)     # levanta RuntimeError se o link não abrir
+        self._proc_started = time.time()
+        threading.Thread(target=self._keep_alive, daemon=True).start()
         if auto:
             meter, channel = None, twitch_channel(url)
             if channel:   # o chat da Twitch reforça a análise; sem ele segue só o áudio
                 meter = ChatMeter()
                 self.chat = TwitchChat(channel, meter)
                 self.chat.start()
-            self.watcher = LiveWatcher(self.dir, self._highlight, chat=meter)
+            self.watcher = LiveWatcher(self.dir, self._highlight, chat=meter,
+                                       on_event=lambda text, level="info": activity.log(text, level, self.name))
             self.watcher.start()
 
     def _highlight(self, seconds: float, kind: str, score: float) -> None:
@@ -58,7 +66,40 @@ class LiveSession:
 
     @property
     def running(self) -> bool:
-        return self.proc.poll() is None
+        return not self._ended
+
+    def _check(self) -> None:
+        """Se o gravador caiu e a live continua no ar, reconecta.
+
+        O gravador às vezes encerra sozinho, sem erro, na troca do anúncio inicial da
+        Twitch para a transmissão. Sem isto a live sumia e nada mais era clipado.
+        """
+        if self._ended or self.proc.poll() is None:
+            return
+        if self._stopped:
+            self._ended = True
+            return
+        self._short_runs = self._short_runs + 1 if time.time() - self._proc_started < SHORT_RUN else 0
+        if self.reconnects >= MAX_RECONNECTS or self._short_runs >= 3:
+            self.failed = self.buffered() == 0
+            self._ended = True
+            return
+        try:
+            self.proc = live.record(self.url, self.dir)    # falha se o canal saiu do ar
+        except RuntimeError:
+            self._ended = True                              # a live acabou de verdade
+            return
+        self.reconnects += 1
+        self._proc_started = time.time()
+        activity.log(f"A gravação caiu e foi retomada ({self.reconnects}ª vez)", "warn", self.name)
+
+    def _keep_alive(self) -> None:
+        while not self._ended:
+            time.sleep(3)
+            try:
+                self._check()
+            except Exception:
+                pass
 
     def buffered(self) -> float:
         playlist = self.dir / "buffer.m3u8"
@@ -71,7 +112,8 @@ class LiveSession:
         return self._on_clip(self, raw, opts, job_id)
 
     def stop(self) -> None:
-        if self.running:
+        self._stopped = True
+        if self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=10)
@@ -80,6 +122,7 @@ class LiveSession:
         for worker in (self.watcher, self.chat):
             if worker:
                 worker.stop()
+        self._ended = True
         self.ended_at = self.ended_at or time.time()
 
     def status(self) -> dict:
@@ -88,10 +131,14 @@ class LiveSession:
         return {
             "id": self.id, "url": self.url, "name": self.name, "origin": self.origin,
             "running": running,
-            # ffmpeg saiu com erro sem gravar nada: o link não é uma live que dê para ler.
-            "failed": bool(not running and self.proc.returncode and buffered == 0),
+            # O gravador não conseguiu gravar nada: o link não é uma live que dê para ler.
+            "failed": self.failed, "reconnects": self.reconnects,
             "auto": bool(self.watcher), "auto_clips": self.watcher.clips if self.watcher else 0,
             "chat": bool(self.chat and self.chat.connected),
+            "analysed": self.watcher.total if self.watcher else 0,
+            "lift": round(self.watcher.lift, 1) if self.watcher else None,
+            "peak_lift": round(self.watcher.peak_lift, 1) if self.watcher else None,
+            "waiting": bool(self.watcher and self.watcher.pending),
             "started": self.started, "buffered": round(buffered),
             "capacity": live.SEGMENT_SECONDS * live.BUFFER_SEGMENTS,
         }
@@ -122,8 +169,11 @@ class LiveManager:
             try:
                 session = LiveSession(url, auto, credit, origin, self._on_clip)
             except RuntimeError as exc:
+                activity.log(f"Não consegui abrir a live: {exc}", "error", display_name(url))
                 raise LiveError(str(exc))
             self.sessions[session.id] = session
+            activity.log("Começou a gravar a live" + (" (canal acompanhado entrou ao vivo)" if origin == "canal" else ""),
+                         "ok", session.name)
             return session
 
     def get(self, session_id: str) -> LiveSession | None:
@@ -172,6 +222,7 @@ class LiveManager:
             if len(channels) >= 20:
                 raise LiveError("Limite de 20 canais cadastrados.")
             self._save_channels(channels + [{"url": url, "credit": credit}])
+        activity.log("Canal cadastrado; vou conferir a cada 90 s se entrou ao vivo", "ok", display_name(url))
         threading.Thread(target=self.check_channels, daemon=True).start()   # confere já
 
     def remove_channel(self, url: str) -> None:
@@ -206,6 +257,10 @@ class LiveManager:
         for session in list(self.sessions.values()):
             if session.running:
                 continue
+            if session.ended_at is None:
+                failed = session.failed
+                activity.log("A gravação falhou: o link não entregou vídeo" if failed else "A live terminou",
+                             "error" if failed else "info", session.name)
             session.ended_at = session.ended_at or now
             for worker in (session.watcher, session.chat):
                 if worker:

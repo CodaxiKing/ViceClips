@@ -197,7 +197,18 @@ def test_registered_channel_starts_recording_when_it_goes_live(fake_record, monk
 
     # A live acabou: a sessão do canal sai da lista para recomeçar na próxima transmissão.
     session = next(iter(web.manager.sessions.values()))
+    # O gravador cai com a live ainda no ar: é retomado, a sessão continua.
     session.proc.returncode = 0
+    session._check()
+    assert session.running and session.reconnects == 1
+
+    # Agora a live acabou de verdade (o canal não abre mais).
+    def offline(url, directory):
+        raise RuntimeError("O canal está offline.")
+    monkeypatch.setattr(lives.live, "record", offline)
+    session.proc.returncode = 0
+    session._check()
+    assert not session.running and not session.failed
     session.ended_at = time.time() - 200
     web.manager.reap()
     assert client.get("/api/live").json()["sessions"] == []

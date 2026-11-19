@@ -38,6 +38,8 @@
       <a href="#publicar" data-page="publicar">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Publicar
         <span class="badge" id="posts-badge" hidden></span></a>
+      <a href="#atividade" data-page="atividade">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Atividade</a>
       <a href="#servidor" data-page="servidor">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Servidor
         <span class="dot warn" id="health-dot" hidden></span></a>
@@ -49,6 +51,12 @@
   </aside>
 
   <main>
+    <div class="alert" id="js-error" role="alert" hidden></div>
+    <a class="now" id="now" href="#atividade" hidden>
+      <span class="now-dot"></span>
+      <span class="now-text" id="now-text"></span>
+      <span class="now-more">ver tudo</span>
+    </a>
     <!-- Novo clip -->
     <section class="page" id="page-novo">
       <h1>Novo clip</h1>
@@ -178,6 +186,13 @@
       </div>
     </section>
 
+    <!-- Atividade -->
+    <section class="page" id="page-atividade" hidden>
+      <h1>Atividade</h1>
+      <p class="lead">Tudo o que o ViceClips está fazendo, passo a passo, do mais recente para o mais antigo.</p>
+      <div id="activity" class="feed"></div>
+    </section>
+
     <!-- Servidor -->
     <section class="page" id="page-servidor" hidden>
       <h1>Servidor</h1>
@@ -227,6 +242,7 @@
       <div class="meter" aria-hidden="true"><div></div></div>
       <p class="hint live-buffer"></p>
       <p class="hint live-auto"></p>
+      <p class="hint live-watch"></p>
       <form class="live-clip-form">
         <fieldset class="segmented">
           <legend>Clipar os últimos</legend>
