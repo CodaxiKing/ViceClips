@@ -284,7 +284,7 @@ def test_only_speech_in_the_streamer_language_becomes_caption(monkeypatch):
     monkeypatch.setattr(t, "_audio", lambda path: audio)
 
     words = t.transcribe_words("clip.mp4")
-    assert [(w.text, round(w.start, 1)) for w in words] == [("oi", 1.3)]   # só o bloco em português
+    assert [w.text for w in words] == ["oi"] and 1.0 <= words[0].start <= 2.0   # só o bloco em português
 
     monkeypatch.setattr(t, "CAPTION_LANG", "")                  # filtro desligado: legenda tudo
     monkeypatch.setattr(FakeModel, "transcribe", lambda self, chunk, language=None, **_: ([Segment("x")], None))
@@ -412,3 +412,47 @@ def test_health_survives_files_vanishing_while_it_counts(monkeypatch):
 
 def test_static_files_are_always_revalidated():
     assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
+
+
+def test_streamer_and_game_in_the_same_block_are_separated(monkeypatch):
+    import numpy as np
+    from viceclips.ai import transcribe as t
+
+    class Segment:
+        no_speech_prob = 0.0
+
+        def __init__(self, text):
+            self.words = [type("W", (), {"word": text, "start": 0.2, "end": 0.6, "probability": 0.9})()]
+
+    transcribed = []
+
+    class FakeModel:
+        def detect_language(self, chunk):
+            lang = "en" if float(np.abs(chunk).mean()) > 0.5 else "pt"
+            return lang, 0.9, [(lang, 0.9)]
+
+        def transcribe(self, chunk, language=None, **_):
+            transcribed.append(round(len(chunk) / t.RATE, 1))
+            return [Segment("fala")], None
+
+    audio = np.full(12 * t.RATE, 0.1, np.float32)
+    audio[4 * t.RATE: 8 * t.RATE] = 0.9                   # 4-8 s: o jogo fala, colado na fala do streamer
+    monkeypatch.setattr(t, "available", lambda: True)
+    monkeypatch.setattr(t, "_load", lambda: FakeModel())
+    monkeypatch.setattr(t, "_speech_spans", lambda a: [(0.0, 12.0)])     # um bloco só, sem pausa
+    monkeypatch.setattr(t, "_audio", lambda path: audio)
+
+    words = t.transcribe_words("clip.mp4")
+    assert len(words) == 2                                 # antes e depois do jogo
+    assert all(not 4.0 <= w.start < 8.0 for w in words)    # nada do trecho do jogo
+    assert sum(transcribed) < 9                            # e o trecho do jogo nem foi transcrito
+
+
+def test_text_that_reads_as_english_is_dropped_as_a_safety_net():
+    from viceclips.ai.transcribe import Word, looks_foreign
+
+    say = lambda text: [Word(0, 1, w) for w in text.split()]
+    assert looks_foreign(say("I don't know what you want"), "pt")
+    assert not looks_foreign(say("cara, olha isso aqui, que absurdo"), "pt")
+    assert not looks_foreign(say("vou pegar o headshot agora, mano"), "pt")       # gíria em inglês não derruba
+    assert not looks_foreign(say("the end"), "pt")                               # curto demais para julgar
