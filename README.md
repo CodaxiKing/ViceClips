@@ -28,7 +28,22 @@ pip install -e ".[ai,dev]"
 O extra `ai` (título automático e transcrição) é opcional; copie `.env.example` e defina
 `ANTHROPIC_API_KEY` para usá-lo. Sem ele, passe `--title`.
 
-## Uso
+## Interface web
+
+```bash
+viceclips web
+```
+
+Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
+
+- **Novo clip**: cole o link de uma live gravada (por intervalo ou automático) ou envie um arquivo.
+- **Ao vivo**: cole o link da live; o sistema guarda os últimos 10 minutos e você clipa na hora.
+- **Fila**: andamento de cada clip (um render por vez).
+- **Meus clips**: assistir, baixar e excluir os clips prontos.
+
+O servidor escuta só na própria máquina e não tem login; não o exponha na internet como está.
+
+## Uso pela linha de comando
 
 ```bash
 # trecho local já recortado no tempo
@@ -53,7 +68,9 @@ Os clips saem em `out/`; arquivos intermediários ficam em `work/`.
 
 ```
 viceclips/
-  cli.py               comandos: render, vod, live, live-clip
+  cli.py               comandos: web, render, vod, live, live-clip
+  web/app.py           API (FastAPI) e fila de jobs
+  web/static/          página única: menu lateral, formulários, galeria
   pipeline.py          detectar câmera -> título -> render
   config.py            layout 1080x1920, cores, fontes
   media.py             helpers de ffmpeg/ffprobe

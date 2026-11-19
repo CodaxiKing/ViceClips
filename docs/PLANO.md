@@ -53,7 +53,9 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 
 ### Fase 5: produto
 
-- [ ] API + fila de jobs (FastAPI + worker) e painel web: colar link, revisar, aprovar
+- [x] Interface web com menu lateral: novo clip, ao vivo, fila e galeria (`viceclips web`)
+- [ ] Fila persistente (hoje em memória: reiniciar o servidor esquece os jobs em andamento)
+- [ ] Login, para poder hospedar fora da própria máquina
 - [ ] Editor de ajuste fino: arrastar o retângulo da câmera, editar título, aparar corte
 - [ ] Publicação agendada em Reels, TikTok e Shorts
 - [ ] Vários canais monitorados ao mesmo tempo

@@ -8,11 +8,14 @@ dependencies = [
   "opencv-python-headless<5",  # 5.x removeu o CascadeClassifier
   "pillow",
   "yt-dlp",
+  "fastapi",
+  "uvicorn",
+  "python-multipart",
 ]
 
 [project.optional-dependencies]
 ai = ["anthropic", "faster-whisper"]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [project.scripts]
 viceclips = "viceclips.cli:main"
@@ -23,3 +26,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["viceclips*"]
+
+[tool.setuptools.package-data]
+viceclips = ["web/static/*"]

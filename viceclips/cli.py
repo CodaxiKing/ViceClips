@@ -1,5 +1,6 @@
 """CLI do ViceClips.
 
+  viceclips web                      # interface no navegador (http://127.0.0.1:8000)
   viceclips render trecho.mp4 --title "GTA 6 Alien Abduction"
   viceclips vod URL --start 1:23:45 --end 1:24:30
   viceclips vod URL --auto 5
@@ -74,10 +75,22 @@ def cmd_live_clip(args) -> None:
     _render(args, str(raw), f"clip_{stamp}")
 
 
+def cmd_web(args) -> None:
+    import uvicorn
+
+    print(f"ViceClips em http://{args.host}:{args.port}")
+    uvicorn.run("viceclips.web.app:app", host=args.host, port=args.port, log_level="warning")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="viceclips", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("web", help="interface web")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=cmd_web)
 
     p = sub.add_parser("render", help="arquivo local já recortado -> clip vertical")
     p.add_argument("file")

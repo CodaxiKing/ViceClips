@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ViceClips</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="menu-btn" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+    <span class="logo">VICE<b>CLIPS</b></span>
+  </header>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="logo logo-lg">VICE<b>CLIPS</b></div>
+    <nav aria-label="Menu principal">
+      <a href="#novo" data-page="novo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Novo clip</a>
+      <a href="#aovivo" data-page="aovivo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M6 6a8.5 8.5 0 0 0 0 12M18 6a8.5 8.5 0 0 1 0 12"/></svg>Ao vivo
+        <span class="dot" id="live-dot" hidden></span></a>
+      <a href="#fila" data-page="fila">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Fila
+        <span class="badge" id="queue-badge" hidden></span></a>
+      <a href="#clips" data-page="clips">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/></svg>Meus clips</a>
+    </nav>
+    <p class="sidebar-foot">Câmera em cima, gameplay embaixo, título no meio.</p>
+  </aside>
+
+  <main>
+    <!-- Novo clip -->
+    <section class="page" id="page-novo">
+      <h1>Novo clip</h1>
+      <p class="lead">Cole o link de uma live gravada ou envie um trecho do seu computador.</p>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="link" aria-selected="true">Link da live</button>
+        <button role="tab" class="tab" data-tab="arquivo" aria-selected="false">Arquivo</button>
+      </div>
+
+      <form class="card" id="form-vod" data-tabpanel="link">
+        <label>Link da live gravada
+          <input type="url" name="url" placeholder="https://www.twitch.tv/videos/…" required>
+        </label>
+
+        <fieldset class="segmented">
+          <legend>Como escolher o momento</legend>
+          <label><input type="radio" name="mode" value="range" checked><span>Por intervalo</span></label>
+          <label><input type="radio" name="mode" value="auto"><span>Automático</span></label>
+        </fieldset>
+
+        <div class="row" id="range-fields">
+          <label>Início
+            <input name="start" placeholder="1:23:45" inputmode="numeric">
+          </label>
+          <label>Fim
+            <input name="end" placeholder="1:24:30" inputmode="numeric">
+          </label>
+        </div>
+        <div id="auto-fields" hidden>
+          <label>Quantos clips
+            <input type="number" name="auto" min="1" max="10" value="3">
+          </label>
+          <p class="hint">Acha os momentos mais barulhentos da live (gritos, risadas). Baixa o áudio inteiro antes, então demora mais.</p>
+        </div>
+
+        <div class="shared-fields"></div>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="btn primary" type="submit">Criar clip</button>
+      </form>
+
+      <form class="card" id="form-upload" data-tabpanel="arquivo" hidden>
+        <label>Vídeo do trecho
+          <input type="file" name="file" accept="video/*,.mkv,.ts,.flv" required>
+        </label>
+        <p class="hint">O arquivo inteiro vira o clip; envie já cortado no momento certo.</p>
+        <div class="shared-fields"></div>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="btn primary" type="submit">Criar clip</button>
+      </form>
+    </section>
+
+    <!-- Ao vivo -->
+    <section class="page" id="page-aovivo" hidden>
+      <h1>Ao vivo</h1>
+      <p class="lead">O ViceClips acompanha a live e guarda os últimos 10 minutos. Aconteceu algo? Clipe na hora.</p>
+
+      <form class="card" id="form-live-start">
+        <label>Link da live
+          <input type="url" name="url" placeholder="https://www.twitch.tv/canal" required>
+        </label>
+        <p class="form-error" role="alert" hidden></p>
+        <button class="btn primary" type="submit">Começar a acompanhar</button>
+      </form>
+
+      <div class="card" id="live-panel" hidden>
+        <div class="live-head">
+          <span class="pill" id="live-pill">AO VIVO</span>
+          <span class="live-url" id="live-url"></span>
+        </div>
+        <div class="meter" aria-hidden="true"><div id="live-meter"></div></div>
+        <p class="hint" id="live-buffer"></p>
+
+        <form id="form-live-clip">
+          <fieldset class="segmented">
+            <legend>Clipar os últimos</legend>
+            <label><input type="radio" name="last" value="20"><span>20 s</span></label>
+            <label><input type="radio" name="last" value="45" checked><span>45 s</span></label>
+            <label><input type="radio" name="last" value="60"><span>60 s</span></label>
+            <label><input type="radio" name="last" value="90"><span>90 s</span></label>
+          </fieldset>
+          <div class="shared-fields"></div>
+          <p class="form-error" role="alert" hidden></p>
+          <div class="actions">
+            <button class="btn primary" type="submit">Clipar agora</button>
+            <button class="btn ghost" type="button" id="live-stop">Parar de acompanhar</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Fila -->
+    <section class="page" id="page-fila" hidden>
+      <h1>Fila</h1>
+      <p class="lead">Os clips são processados um por vez.</p>
+      <div id="jobs" class="list"></div>
+    </section>
+
+    <!-- Meus clips -->
+    <section class="page" id="page-clips" hidden>
+      <h1>Meus clips</h1>
+      <p class="lead">Prontos para baixar e postar.</p>
+      <div id="clips" class="grid"></div>
+    </section>
+  </main>
+
+  <dialog id="player">
+    <video controls playsinline></video>
+    <button class="btn ghost" id="player-close">Fechar</button>
+  </dialog>
+
+  <template id="shared-fields">
+    <label><span>Título <span class="opt">opcional</span></span>
+      <input name="title" maxlength="60" placeholder="GTA 6 Alien Abduction">
+    </label>
+    <label><span>Crédito do streamer <span class="opt">opcional</span></span>
+      <input name="credit" maxlength="30" placeholder="@canal">
+    </label>
+    <details>
+      <summary>Ajuste da câmera</summary>
+      <label>Posição no vídeo original (X,Y,L,A)
+        <input name="cam" placeholder="automático" inputmode="numeric">
+      </label>
+      <p class="hint">Deixe vazio para detectar sozinho. Preencha se a câmera sair cortada errado.</p>
+    </details>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
