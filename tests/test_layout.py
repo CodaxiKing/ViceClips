@@ -49,3 +49,18 @@ def test_camera_border_search_gives_up_without_a_clear_line():
     flat[50] = 25
     assert _find_line(flat, 0, 200, "hi") is None        # destaque fraco não conta como borda
     assert _find_line(flat, 190, 191, "hi") is None      # faixa de busca vazia
+
+
+def test_logo_watermark_is_semi_transparent_and_can_be_turned_off(tmp_path, monkeypatch):
+    from PIL import Image
+    from viceclips.render.title_card import LOGO_MARGIN, LOGO_SIZE, render_overlay
+
+    corner = (config.OUT_W - LOGO_MARGIN - LOGO_SIZE // 2, 400 + LOGO_SIZE // 2)   # centro da logo
+    alpha_at_logo = lambda path: Image.open(path).getchannel("A").getpixel(corner)
+
+    with_logo = render_overlay(None, None, 600, str(tmp_path / "a.png"), logo_y=400)
+    assert 100 < alpha_at_logo(with_logo) < 255            # visível, mas não opaca
+    assert Image.open(with_logo).getchannel("A").getpixel((540, 1200)) == 0   # resto da tela livre
+
+    monkeypatch.setattr(config, "LOGO_OPACITY", 0.0)
+    assert alpha_at_logo(render_overlay(None, None, 600, str(tmp_path / "b.png"), logo_y=400)) == 0

@@ -19,6 +19,10 @@ FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
 ]
 
+# Marca d'água do canal: arquivo PNG com transparência ("" desliga) e opacidade de 0 a 1.
+LOGO_PATH = os.environ.get("VICECLIPS_LOGO", str(Path(__file__).parent / "render" / "assets" / "logo.png"))
+LOGO_OPACITY = float(os.environ.get("VICECLIPS_LOGO_OPACITY", "0.7"))
+
 WORK_DIR = Path(os.environ.get("VICECLIPS_WORK", "work"))
 OUT_DIR = Path(os.environ.get("VICECLIPS_OUT", "out"))
 TITLE_LANG = os.environ.get("VICECLIPS_TITLE_LANG", "pt-BR")

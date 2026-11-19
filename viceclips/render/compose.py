@@ -10,7 +10,7 @@ from .. import config
 from ..config import Rect
 from ..media import probe, run
 from .captions import subtitles_filter, write_ass
-from .title_card import render_overlay
+from .title_card import LOGO_MARGIN, LOGO_SIZE, render_overlay
 
 
 def _even(v: float) -> int:
@@ -53,13 +53,17 @@ def compose(src: str, out: str, cam: Rect | None = None,
             f"[cam][game]vstack[base];"
         )
         title_y = pad_h + 28
+        # Canto inferior direito do painel da câmera: longe do rosto, do título, das
+        # legendas e dos botões que TikTok/Reels desenham por cima do vídeo.
+        logo_y = config.CAM_H - LOGO_SIZE - LOGO_MARGIN
     else:
         g = game_crop(W, H, config.OUT_W, config.OUT_H, None)
         graph = f"[0:v]crop={g.w}:{g.h}:{g.x}:{g.y},scale={config.OUT_W}:{config.OUT_H}[base];"
         title_y = 150
+        logo_y = LOGO_MARGIN + 120     # sem câmera: canto superior direito, abaixo da barra do app
 
     with tempfile.TemporaryDirectory() as tmp:
-        overlay = render_overlay(title, credit, title_y, f"{tmp}/overlay.png")
+        overlay = render_overlay(title, credit, title_y, f"{tmp}/overlay.png", logo_y=logo_y)
         graph += "[base][1:v]overlay=0:0"
         ass = write_ass(words, f"{tmp}/fala.ass") if words else None
         if ass:

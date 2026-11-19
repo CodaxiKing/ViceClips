@@ -1,9 +1,13 @@
 """Gera o PNG transparente (1080x1920) com título, faixa rosa e crédito."""
+from pathlib import Path
+
 from PIL import Image, ImageDraw, ImageFont
 
 from .. import config
 
 MARGIN = 60
+LOGO_SIZE = 150       # lado da marca d'água, em pixels do vídeo final
+LOGO_MARGIN = 20
 MAX_LINES = 2
 
 
@@ -24,7 +28,19 @@ def _printable(text: str) -> str:
     return " ".join("".join(c for c in text if ord(c) < 0x2190).split())
 
 
-def render_overlay(title: str | None, credit: str | None, title_y: int, out_path: str) -> str:
+def _paste_logo(img: Image.Image, corner_y: int) -> None:
+    """Marca d'água do canal, meio transparente, encostada na direita."""
+    if not config.LOGO_PATH or not Path(config.LOGO_PATH).exists() or config.LOGO_OPACITY <= 0:
+        return
+    logo = Image.open(config.LOGO_PATH).convert("RGBA")
+    logo.thumbnail((LOGO_SIZE, LOGO_SIZE), Image.LANCZOS)
+    alpha = logo.getchannel("A").point(lambda a: int(a * min(config.LOGO_OPACITY, 1.0)))
+    logo.putalpha(alpha)
+    img.alpha_composite(logo, (config.OUT_W - logo.width - LOGO_MARGIN, corner_y))
+
+
+def render_overlay(title: str | None, credit: str | None, title_y: int, out_path: str,
+                   logo_y: int | None = None) -> str:
     img = Image.new("RGBA", (config.OUT_W, config.OUT_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     font_file = config.font_path()
@@ -53,6 +69,9 @@ def render_overlay(title: str | None, credit: str | None, title_y: int, out_path
         x0, y0 = 28, 28
         draw.rounded_rectangle([x0, y0, x0 + tw + 36, y0 + 58], radius=29, fill=config.BLACK + "CC")
         draw.text((x0 + 18, y0 + 29), credit, font=font, anchor="lm", fill=config.PINK)
+
+    if logo_y is not None:
+        _paste_logo(img, logo_y)
 
     img.save(out_path)
     return out_path

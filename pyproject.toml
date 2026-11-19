@@ -29,4 +29,4 @@ build-backend = "setuptools.build_meta"
 include = ["viceclips*"]
 
 [tool.setuptools.package-data]
-viceclips = ["web/static/*", "detect/*.onnx"]
+viceclips = ["web/static/*", "detect/*.onnx", "render/assets/*"]

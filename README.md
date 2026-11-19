@@ -58,6 +58,7 @@ celular quando um clip fica pronto.
 | `VICECLIPS_CAPTION_LANG` | `pt` | idioma do streamer; só fala nesse idioma vira legenda (vazio = legenda tudo) |
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
 | `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo |
+| `VICECLIPS_LOGO_OPACITY` | `0.7` | opacidade da logo do canal nos clips (`0` tira a logo) |
 
 A fila fica gravada em `work/jobs.json`: se o servidor reiniciar, os clips que estavam em
 andamento são retomados sozinhos.
