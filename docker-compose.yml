@@ -1,0 +1,16 @@
+# Para o Coolify (ou docker compose local). Defina as variáveis no painel do Coolify.
+services:
+  viceclips:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000"
+    environment:
+      VICECLIPS_PASSWORD: ${VICECLIPS_PASSWORD:?defina a senha do site}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      VICECLIPS_TITLE_LANG: ${VICECLIPS_TITLE_LANG:-pt-BR}
+    volumes:
+      - viceclips-data:/data
+
+volumes:
+  viceclips-data:

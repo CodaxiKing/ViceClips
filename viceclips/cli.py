@@ -84,7 +84,9 @@ def cmd_web(args) -> None:
         raise SystemExit("Para abrir o site fora desta máquina, defina a senha: "
                          "VICECLIPS_PASSWORD=... viceclips web --host 0.0.0.0")
     print(f"ViceClips em http://{args.host}:{args.port}")
-    uvicorn.run("viceclips.web.app:app", host=args.host, port=args.port, log_level="warning")
+    # proxy_headers: atrás de um proxy HTTPS (Coolify/Traefik) o cookie de login sai como Secure.
+    uvicorn.run("viceclips.web.app:app", host=args.host, port=args.port, log_level="warning",
+                proxy_headers=True, forwarded_allow_ips="*")
 
 
 def main() -> None:

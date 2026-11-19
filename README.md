@@ -59,6 +59,44 @@ VICECLIPS_PASSWORD="sua-senha" viceclips web --host 0.0.0.0
 Na internet, coloque o site atrás de HTTPS (Caddy, nginx, Cloudflare Tunnel); sem isso a
 senha trafega em texto puro.
 
+## App no celular
+
+O site é um app instalável (PWA): depois de hospedado com HTTPS, abra o endereço no celular e
+
+- **Android (Chrome)**: menu ⋮ → "Instalar app" (ou "Adicionar à tela inicial").
+- **iPhone (Safari)**: botão Compartilhar → "Adicionar à Tela de Início".
+
+Ele abre em tela cheia, com ícone próprio, e faz tudo o que o site faz. No Android, o ViceClips
+também aparece no menu "Compartilhar" dos outros apps: compartilhe o link de uma live da Twitch
+ou do YouTube e ele já abre com o link preenchido.
+
+## Hospedagem no Coolify
+
+O repositório traz `Dockerfile` e `docker-compose.yml`.
+
+1. No Coolify: **New Resource → Public/Private Repository**, aponte para este repositório e
+   escolha o build pack **Dockerfile** (ou **Docker Compose**).
+2. Porta exposta: `8000`.
+3. Variáveis de ambiente:
+   - `VICECLIPS_PASSWORD` (obrigatória): senha do site. Sem ela o servidor não sobe.
+   - `ANTHROPIC_API_KEY` (opcional): liga o título automático. Sem ela os clips saem sem título.
+4. **Persistent Storage**: monte um volume em `/data` (clips prontos e fila). Sem volume, os
+   clips somem a cada deploy.
+5. Configure o domínio; o Coolify emite o HTTPS, que é necessário para instalar o app.
+
+Vídeo consome CPU e disco: um render usa um núcleo inteiro por alguns segundos a minutos, e a
+live ao vivo mantém até ~10 minutos de buffer em disco.
+
+Para testar a imagem localmente:
+
+```bash
+docker build -t viceclips .
+```
+
+```bash
+docker run -p 8000:8000 -e VICECLIPS_PASSWORD=troque-esta-senha -v viceclips-data:/data viceclips
+```
+
 ## Uso pela linha de comando
 
 ```bash

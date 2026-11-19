@@ -201,3 +201,8 @@ label.check input { width: 20px; height: 20px; padding: 0; accent-color: var(--p
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .card { width: min(380px, 100%); }
 .login .logo-lg { padding: 0; }
+
+/* ---------- app instalado: respeita entalhe e barra de gestos ---------- */
+.topbar { padding-top: max(8px, env(safe-area-inset-top)); }
+.sidebar { padding-top: max(24px, env(safe-area-inset-top)); padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+main { padding-bottom: max(64px, env(safe-area-inset-bottom)); }

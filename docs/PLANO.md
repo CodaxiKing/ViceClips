@@ -56,7 +56,11 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 - [x] Interface web com menu lateral: novo clip, ao vivo, fila e galeria (`viceclips web`)
 - [x] Fila persistente: jobs gravados em disco e retomados após reinício
 - [x] Login por senha (`VICECLIPS_PASSWORD`), exigido para atender fora da própria máquina
+- [x] App de celular instalável (PWA) com "Compartilhar para o ViceClips" no Android
+- [x] Deploy por Docker (Coolify): `Dockerfile` e `docker-compose.yml`
 - [ ] Contas por usuário (hoje é uma senha única)
+- [ ] Notificação no celular quando um clip fica pronto
+- [ ] App nas lojas (Play Store / App Store), se o PWA não bastar
 - [ ] Editor de ajuste fino: arrastar o retângulo da câmera, editar título, aparar corte
 - [ ] Publicação agendada em Reels, TikTok e Shorts
 - [ ] Vários canais monitorados ao mesmo tempo

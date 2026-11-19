@@ -242,5 +242,18 @@ $("#logout").addEventListener("click", async () => {
   location.reload();
 });
 
+/* ---------- app instalado ---------- */
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+
+// "Compartilhar" de outro app (Twitch, YouTube...) abre aqui com o link já preenchido.
+const shared = new URLSearchParams(location.search);
+const sharedLink = [shared.get("url"), shared.get("text"), shared.get("title")]
+  .map((value) => (value || "").match(/https?:\/\/\S+/))
+  .find(Boolean);
+if (sharedLink) {
+  $("#form-vod [name=url]").value = sharedLink[0];
+  history.replaceState(null, "", "/#novo");
+}
+
 showPage();
 setInterval(refresh, 2000);

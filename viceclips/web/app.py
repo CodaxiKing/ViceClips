@@ -73,7 +73,7 @@ def _authed(request: Request) -> bool:
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    public = path in ("/", "/api/login", "/api/session") or path.startswith("/static/")
+    public = path in ("/", "/sw.js", "/api/login", "/api/session") or path.startswith("/static/")
     if not public and not _authed(request):
         return JSONResponse({"detail": "Faça login."}, status_code=401)
     return await call_next(request)
@@ -409,6 +409,13 @@ def delete_clip(name: str) -> dict:
 def index(request: Request) -> FileResponse:
     page = "index.html" if _authed(request) else "login.html"
     return FileResponse(STATIC / page, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    # Servido na raiz para o service worker valer para o site inteiro.
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
 
 
 _resume_jobs()
