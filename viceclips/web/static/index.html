@@ -18,12 +18,12 @@
     <button class="icon-btn" id="menu-btn" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
-    <span class="logo">VICE<b>CLIPS</b></span>
+    <img class="logo-img small" src="/static/logo.png" alt="ViceClips">
   </header>
   <div class="scrim" id="scrim" hidden></div>
 
   <aside class="sidebar" id="sidebar">
-    <div class="logo logo-lg">VICE<b>CLIPS</b></div>
+    <img class="logo-img" src="/static/logo.png" alt="ViceClips">
     <nav aria-label="Menu principal">
       <a href="#novo" data-page="novo">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>Novo clip</a>
@@ -237,6 +237,9 @@
       <label><span>Quando <span class="opt">vazio = agora</span></span>
         <input type="datetime-local" name="when">
       </label>
+      <label class="check"><input type="checkbox" name="private">
+        <span>Postar como privado (teste)</span></label>
+      <p class="hint">Para o primeiro teste: o vídeo sobe só para você no YouTube e no TikTok. O Instagram não tem post privado.</p>
       <p class="form-error" role="alert" hidden></p>
       <div class="actions">
         <button class="btn primary" type="submit">Publicar</button>

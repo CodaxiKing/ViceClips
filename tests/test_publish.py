@@ -219,3 +219,31 @@ def test_callback_and_public_link_work_without_login_but_the_rest_does_not(platf
     assert fresh.get("/api/publish/youtube/connect").status_code == 401
     assert fresh.get("/api/publish/youtube/callback", params={"state": "x", "code": "y"}).status_code == 307
     assert fresh.get(f"/public/{int(time.time()) + 60}/{'0' * 40}/clip_a.mp4").status_code == 404
+
+
+def test_private_test_post_and_instagram_login_answer_nested_in_data(platforms, monkeypatch):
+    # A documentação do Instagram mostra a resposta do login dentro de "data": [...]
+    real = platforms._handle
+
+    def nested(self):
+        if urlparse(self.path).path == "/ig/oauth/access_token":
+            self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+            return self._reply({"data": [{"access_token": "ig-short", "user_id": "777", "permissions": "x"}]})
+        return real(self)
+
+    monkeypatch.setattr(platforms, "do_POST", nested)
+    connect("instagram")
+    assert publish.accounts()["instagram"]["user_id"] == "777"
+
+    connect("youtube")
+    connect("tiktok")
+    platforms.calls.clear()
+    publish.schedule("clip_a", "Fuga épica", ["youtube", "tiktok", "instagram"], "teste", None, private=True)
+    publish.run_due()
+    targets = publish.posts()[-1]["targets"]
+    by_path = {c["path"]: c for c in platforms.calls}
+    assert json.loads(by_path["/youtube/upload"]["raw"])["status"]["privacyStatus"] == "private"
+    assert json.loads(by_path["/v2/post/publish/video/init/"]["raw"])["post_info"]["privacy_level"] == "SELF_ONLY"
+    assert targets["youtube"]["status"] == "publicado" and "privado" in targets["youtube"]["detail"]
+    assert targets["instagram"]["status"] == "erro" and "não tem post privado" in targets["instagram"]["detail"]
+    assert "/ig/777/media" not in by_path                 # nada foi enviado ao Instagram no teste privado

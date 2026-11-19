@@ -36,7 +36,7 @@ from ..highlights import calibration
 from ..ingest import vod
 from ..media import frame_jpeg, parse_time, probe
 from ..pipeline import NoStreamer, ai_titles_enabled, build_clip
-from . import activity, publish, push
+from . import activity, lives, publish, push
 from ..highlights.rate import SENSITIVITY
 from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession, display_name, sensitivity
 
@@ -318,10 +318,38 @@ def sweep(now: float | None = None) -> None:
                 leftover.unlink(missing_ok=True)
 
 
+_disk = "ok"
+
+
+def guard_disk() -> str:
+    """Age quando o disco muda de estado: avisa, bloqueia gravações novas ou pausa as atuais."""
+    global _disk
+    state = lives.disk_state()
+    if state == _disk:
+        return state
+    free = lives.free_gb()
+    if state == "critico":
+        paused = manager.pause_all()
+        text = (f"Disco quase cheio ({free:.1f} GB livres): pausei {paused} gravação(ões) para os clips não "
+                "falharem. Libere espaço e reative os canais em Ao vivo.")
+        activity.log(text, "error")
+        push.notify("ViceClips: disco quase cheio", text, "/#servidor")
+    elif state == "baixo" and _disk == "ok":
+        text = (f"Pouco espaço em disco ({free:.1f} GB livres): não vou começar gravações novas até liberar espaço. "
+                "As que já estão rodando continuam.")
+        activity.log(text, "warn")
+        push.notify("ViceClips: pouco espaço em disco", text, "/#servidor")
+    elif state == "ok":
+        activity.log(f"Espaço em disco normalizado ({free:.1f} GB livres): gravações liberadas de novo", "ok")
+    _disk = state
+    return state
+
+
 def _janitor() -> None:
     while not _halt.wait(20):
         try:
             sweep()
+            guard_disk()
         except Exception:
             pass
 
@@ -748,11 +776,16 @@ def health() -> dict:
                   key=lambda j: j["finished"])[-20:]
     times = [j["finished"] - j["started"] for j in done]
     errors = sorted((j for j in jobs if j["status"] == "erro"), key=lambda j: j["created"], reverse=True)[:8]
-    lives = manager.status()["sessions"]
+    live_sessions = manager.status()["sessions"]
 
     warnings = []
-    if disk.free < max(2 * 1024 ** 3, disk.total * 0.1):
-        warnings.append("Pouco espaço em disco: os próximos clips podem falhar.")
+    state = lives.disk_state()
+    if state == "critico":
+        warnings.append("Disco quase cheio: as gravações foram pausadas. Libere espaço e reative os canais.")
+    elif state == "baixo":
+        warnings.append(f"Pouco espaço em disco: novas gravações estão bloqueadas até haver {lives.MIN_FREE_GB:g} GB livres.")
+    elif disk.free < disk.total * 0.1:
+        warnings.append("Menos de 10% do disco livre.")
     if load > cores * 0.9:
         warnings.append("Processador no limite: os clips vão demorar mais para ficar prontos.")
     if memory["total"] and memory["available"] < memory["total"] * 0.1:
@@ -765,13 +798,14 @@ def health() -> dict:
     return {
         "warnings": warnings,
         "uptime": round(now - _started_at),
+        "disk_state": state,
         "disk": {"total": disk.total, "free": disk.free, "clips": _folder_bytes(config.OUT_DIR),
                  "work": _folder_bytes(config.WORK_DIR)},
         "cpu": {"cores": cores, "load": round(load, 2), "percent": min(100, round(load / cores * 100))},
         "memory": memory,
         "queue": {"waiting": len(waiting), "running": running["step"] if running else None,
                   "running_label": running["label"] if running else None},
-        "lives": {"active": sum(s["running"] for s in lives), "max": manager.status()["max"]},
+        "lives": {"active": sum(s["running"] for s in live_sessions), "max": manager.status()["max"]},
         "renders": {"count": len(times), "average": round(sum(times) / len(times)) if times else None,
                     "slowest": round(max(times)) if times else None},
         "errors": [{"label": j["label"], "error": j["error"], "when": j["created"]} for j in errors],
@@ -885,6 +919,7 @@ class NewPost(BaseModel):
     platforms: list[str]
     caption: str = ""
     when: float | None = None      # segundos desde 1970; vazio = agora
+    private: bool = False          # teste: sobe como privado (YouTube e TikTok)
 
 
 @app.get("/api/publish")
@@ -928,7 +963,7 @@ def post_create(req: NewPost, request: Request) -> dict:
     if req.when and not now - 300 <= req.when <= now + 30 * 86400:
         raise HTTPException(422, "Escolha uma data entre agora e os próximos 30 dias.")
     try:
-        publish.schedule(req.clip, meta.get("title"), req.platforms, req.caption, req.when)
+        publish.schedule(req.clip, meta.get("title"), req.platforms, req.caption, req.when, req.private)
     except publish.PublishError as exc:
         raise HTTPException(409, str(exc))
     if not req.when or req.when <= now:

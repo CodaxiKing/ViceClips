@@ -62,6 +62,7 @@ celular quando um clip fica pronto.
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
 | `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo (cada uma sem limite de tempo) |
 | `VICECLIPS_WAIT_AFTER_SECONDS` | `60` | segundos de live esperados depois do momento antes de cortar o clip automático |
+| `VICECLIPS_MIN_FREE_GB` | `3` | abaixo disso não começa gravação nova; abaixo de um terço, pausa as atuais |
 | `VICECLIPS_BUFFER_MINUTES` | `30` | minutos de cada live guardados para voltar atrás (2 a 90) |
 | `VICECLIPS_LOGO_OPACITY` | `0.7` | opacidade da logo do canal nos clips (`0` tira a logo) |
 
@@ -89,13 +90,14 @@ aparece na própria tela Publicar.
 
 | Plataforma | Onde criar o app | Variáveis | Atenção |
 |---|---|---|---|
-| YouTube Shorts | console.cloud.google.com → ative "YouTube Data API v3" → credenciais OAuth "Aplicativo da Web" | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | Projeto não verificado pelo Google: os vídeos sobem como **privados** até você pedir a auditoria da API. |
-| TikTok | developers.tiktok.com → app com "Content Posting API" e escopo `video.publish` | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | App não auditado pelo TikTok: os posts saem **só para você** (privados) até a auditoria. |
+| YouTube Shorts | console.cloud.google.com → ative "YouTube Data API v3" → credenciais OAuth "Aplicativo da Web" | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | A documentação atual diz que projetos não verificados não ficam mais presos em privado; se o seu vídeo subir privado, é configuração da conta ou falta da auditoria da API. |
+| TikTok | developers.tiktok.com → app com "Content Posting API" e escopo `video.publish` | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | App não auditado pelo TikTok: só posta em modo privado e exige a **conta do TikTok configurada como privada**, até a auditoria. |
 | Instagram Reels | developers.facebook.com → app com "Instagram API with Instagram Login" | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Precisa de conta **profissional** (Criador ou Empresa). Em modo de desenvolvimento funciona para as contas cadastradas como testadoras do app. |
 
 Um clip com post agendado não é apagado pela faxina automática; depois de publicado, volta
-a valer o prazo normal. Os conectores foram testados contra um servidor que imita as APIs, não
-contra as plataformas reais: a primeira publicação de verdade é o teste final.
+a valer o prazo normal. Os conectores foram conferidos com a documentação oficial de cada plataforma e testados contra um
+servidor que imita as APIs, mas não contra as plataformas reais. Para o primeiro teste, marque
+"Postar como privado (teste)" ao publicar: o vídeo sobe só para você no YouTube e no TikTok.
 
 ## App no celular
 

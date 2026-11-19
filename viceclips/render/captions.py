@@ -8,11 +8,12 @@ from pathlib import Path
 from .. import config
 
 MAX_WORDS = 3          # palavras por vez na tela
-MAX_CHARS = 18
+MAX_CHARS = 16
 MAX_GAP = 0.6          # pausa que quebra a frase
 HOLD = 0.25            # quanto a última palavra fica na tela depois de dita
-CAPTION_Y = 1420       # centro vertical da legenda (terço de baixo do gameplay)
-FONT_SIZE = 82
+CAPTION_Y = 1350       # centro vertical: acima da descrição que os apps põem embaixo
+CAPTION_X = (config.SAFE_LEFT + config.SAFE_RIGHT) // 2   # desviada da coluna de botões da direita
+FONT_SIZE = 78
 
 
 def _ass_color(hex_color: str) -> str:
@@ -82,7 +83,7 @@ def write_ass(words: list, out_path: str) -> str | None:
                 end = word.start + 0.08
             parts = [f"{{\\c{pink}&}}{_clean(w.text)}{{\\c{white}&}}" if j == i else _clean(w.text)
                      for j, w in enumerate(group)]
-            text = f"{{\\pos({config.OUT_W // 2},{CAPTION_Y})}}" + " ".join(parts)
+            text = f"{{\\pos({CAPTION_X},{CAPTION_Y})}}" + " ".join(parts)
             lines.append(f"Dialogue: 0,{_timestamp(word.start)},{_timestamp(end)},Fala,,0,0,0,,{text}")
     Path(out_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out_path

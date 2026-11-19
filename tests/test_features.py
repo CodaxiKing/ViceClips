@@ -593,3 +593,43 @@ def test_manually_followed_live_stays_in_the_saved_list_after_it_ends(fake_recor
     monkeypatch.setattr(lives.vod, "probe", lambda url: {"is_live": True, "duration": None})
     notice = client.post("/api/channels/start", json={"url": "https://www.twitch.tv/canal_a"}).json()
     assert "comecei a gravar" in notice["notice"] and len(notice["sessions"]) == 1
+
+
+# ---------- proteção de disco ----------
+
+def _disk(monkeypatch, free_gb: float):
+    usage = type("U", (), {"total": 100 * 1024 ** 3, "free": int(free_gb * 1024 ** 3), "used": 0})()
+    monkeypatch.setattr(lives.shutil, "disk_usage", lambda path: usage)
+
+
+def test_low_disk_blocks_new_recordings_but_keeps_running_ones(fake_record, monkeypatch):
+    monkeypatch.setattr(web, "_disk", "ok")
+    monkeypatch.setattr(web.push, "notify", lambda *a, **k: None)
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+
+    _disk(monkeypatch, 2.0)                               # abaixo dos 3 GB
+    assert web.guard_disk() == "baixo"
+    blocked = client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_b", "auto": True})
+    assert blocked.status_code == 409 and "Pouco espaço em disco" in blocked.json()["detail"]
+    status = client.get("/api/live").json()
+    assert [s["running"] for s in status["sessions"]] == [True]            # a que já rodava continua
+    assert "bloqueadas" in " ".join(client.get("/api/health").json()["warnings"])
+
+
+def test_critical_disk_pauses_recordings_and_recovery_is_announced(fake_record, monkeypatch):
+    sent = []
+    monkeypatch.setattr(web, "_disk", "ok")
+    monkeypatch.setattr(web.push, "notify", lambda title, body, url="/#clips": sent.append(title))
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+
+    _disk(monkeypatch, 0.5)                               # abaixo de 1 GB
+    assert web.guard_disk() == "critico"
+    assert [s["running"] for s in client.get("/api/live").json()["sessions"]] == [False]
+    assert sent == ["ViceClips: disco quase cheio"]
+    web.guard_disk()
+    assert len(sent) == 1                                 # não repete o aviso a cada conferência
+    assert [c["name"] for c in client.get("/api/live").json()["channels"]] == ["canal_a"]   # canal segue salvo
+
+    _disk(monkeypatch, 40.0)
+    assert web.guard_disk() == "ok"
+    assert client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_b", "auto": True}).status_code == 200

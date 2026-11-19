@@ -8,6 +8,13 @@ CAM_H = 608            # painel da câmera (16:9 em 1080 de largura)
 DIVIDER_H = 6          # faixa rosa entre câmera e gameplay
 GAME_H = OUT_H - CAM_H - DIVIDER_H
 
+# Área segura: TikTok, Reels e Shorts desenham botões, descrição e barra por cima do vídeo.
+# Texto e logo ficam dentro destes limites para não serem cobertos em nenhum dos três.
+SAFE_TOP = 250          # barra de cima (abas, busca)
+SAFE_BOTTOM = 1440      # dali para baixo ficam descrição, música e barra de navegação
+SAFE_LEFT = 60
+SAFE_RIGHT = 900        # coluna de curtir/comentar/compartilhar (na metade de baixo)
+
 PINK = "#FF2E9A"
 BLACK = "#0B0B0F"
 WHITE = "#FFFFFF"

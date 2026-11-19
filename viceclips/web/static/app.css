@@ -295,3 +295,8 @@ select { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid
 .channel { flex-wrap: wrap; }
 .channel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .channel-actions .btn.on { border-color: var(--pink); color: var(--pink); }
+
+/* ---------- logo do canal ---------- */
+.logo-img { width: 132px; height: auto; display: block; margin: 0 auto 18px; }
+.logo-img.small { width: 44px; margin: 0; }
+.login .logo-img { width: 150px; margin-bottom: 4px; }

@@ -40,6 +40,23 @@ def sensitivity() -> str:
     return value if value in SENSITIVITY else "equilibrado"
 
 
+# Proteção de disco: abaixo de MIN_FREE_GB não começa gravação nova; abaixo de um terço
+# disso, as gravações em andamento são pausadas. Melhor parar a tempo do que encher o disco
+# e ver todos os clips falharem.
+MIN_FREE_GB = float(os.environ.get("VICECLIPS_MIN_FREE_GB", "3"))
+
+
+def free_gb() -> float:
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(config.WORK_DIR).free / 1024 ** 3
+
+
+def disk_state() -> str:
+    """"ok", "baixo" (não começa gravação nova) ou "critico" (pausa as gravações)."""
+    free = free_gb()
+    return "critico" if free < MIN_FREE_GB / 3 else "baixo" if free < MIN_FREE_GB else "ok"
+
+
 class LiveError(Exception):
     """Erro com mensagem pronta para mostrar ao usuário."""
 
@@ -182,6 +199,9 @@ class LiveManager:
 
     def start(self, url: str, auto: bool = True, credit: str | None = None,
               origin: str = "manual") -> LiveSession:
+        if disk_state() != "ok":
+            raise LiveError(f"Pouco espaço em disco ({free_gb():.1f} GB livres): não vou começar uma gravação nova. "
+                            "Baixe ou exclua clips, ou aumente o disco do servidor.")
         with self._lock:
             active = [s for s in self.sessions.values() if s.running]
             if any(display_name(s.url) == display_name(url) for s in active):
@@ -311,6 +331,8 @@ class LiveManager:
 
     def check_channels(self) -> None:
         """Começa a acompanhar os canais cadastrados que entraram ao vivo."""
+        if disk_state() != "ok":
+            return                     # sem espaço: nem confere; o aviso já foi dado pela proteção de disco
         for channel in self.channels():
             url = channel["url"]
             if not channel.get("enabled", True):
@@ -331,6 +353,13 @@ class LiveManager:
                     self.start(url, auto=True, credit=channel.get("credit"), origin="canal")
                 except LiveError:
                     pass               # limite de lives atingido: fica para a próxima rodada
+
+    def pause_all(self) -> int:
+        """Para todas as gravações em andamento (disco no limite). Os canais continuam salvos."""
+        running = [s for s in self.sessions.values() if s.running]
+        for session in running:
+            session.stop()
+        return len(running)
 
     def reap(self) -> None:
         """Tira da lista as lives que acabaram."""

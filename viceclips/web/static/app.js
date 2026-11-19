@@ -481,6 +481,7 @@ function openPublish(clip) {
       el("span", { textContent: platform.label }))));
   $("#form-post [name=caption]").value = clip.title || "";
   $("#form-post [name=when]").value = "";
+  $("#form-post [name=private]").checked = false;
   $("#form-post .form-error").hidden = true;
   $("#publish-dialog").showModal();
 }
@@ -489,7 +490,7 @@ onSubmit($("#form-post"), async (data) => {
   const chosen = data.get("when");
   renderPublish(await api("/api/posts", { method: "POST", json: {
     clip: publishClip.name, platforms: data.getAll("platform"), caption: data.get("caption"),
-    when: chosen ? new Date(chosen).getTime() / 1000 : null,
+    when: chosen ? new Date(chosen).getTime() / 1000 : null, private: data.has("private"),
   } }));
   $("#publish-dialog").close();
   location.hash = "publicar";

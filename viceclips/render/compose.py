@@ -56,21 +56,27 @@ def compose(src: str, out: str, cam: Rect | None = None,
         # Canto inferior direito do painel da câmera: longe do rosto, do título, das
         # legendas e dos botões que TikTok/Reels desenham por cima do vídeo.
         logo_y = config.CAM_H - LOGO_SIZE - LOGO_MARGIN
+        credit_y = config.CAM_H - 58 - LOGO_MARGIN       # mesmo rodapé do painel, do lado esquerdo
     else:
         g = game_crop(W, H, config.OUT_W, config.OUT_H, None)
         graph = f"[0:v]crop={g.w}:{g.h}:{g.x}:{g.y},scale={config.OUT_W}:{config.OUT_H}[base];"
         title_y = 150
-        logo_y = LOGO_MARGIN + 120     # sem câmera: canto superior direito, abaixo da barra do app
+        title_y = config.SAFE_TOP + 90
+        logo_y = credit_y = config.SAFE_TOP    # sem câmera: logo e crédito logo abaixo da barra do app
 
     with tempfile.TemporaryDirectory() as tmp:
-        overlay = render_overlay(title, credit, title_y, f"{tmp}/overlay.png", logo_y=logo_y)
+        overlay = render_overlay(title, credit, title_y, f"{tmp}/overlay.png", logo_y=logo_y,
+                                 credit_y=credit_y)
         graph += "[base][1:v]overlay=0:0"
         ass = write_ass(words, f"{tmp}/fala.ass") if words else None
         if ass:
             graph += "," + subtitles_filter(ass)
-        graph += ",format=yuv420p[v]"
+        graph += ",setsar=1,format=yuv420p[v]"
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-i", overlay,
              "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-             "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out])
+             # Formato aceito sem recompressão forçada por TikTok, Reels e Shorts: 1080x1920 (9:16),
+             # H.264 High, até 60 fps, taxa limitada, áudio AAC 48 kHz, índice no começo do arquivo.
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-profile:v", "high", "-level", "4.2",
+             "-maxrate", "10M", "-bufsize", "20M", "-fpsmax", "60", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", "-movflags", "+faststart", out])
     return out

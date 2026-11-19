@@ -40,7 +40,7 @@ def _paste_logo(img: Image.Image, corner_y: int) -> None:
 
 
 def render_overlay(title: str | None, credit: str | None, title_y: int, out_path: str,
-                   logo_y: int | None = None) -> str:
+                   logo_y: int | None = None, credit_y: int = 28) -> str:
     img = Image.new("RGBA", (config.OUT_W, config.OUT_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     font_file = config.font_path()
@@ -66,7 +66,7 @@ def render_overlay(title: str | None, credit: str | None, title_y: int, out_path
     if credit:
         font = ImageFont.truetype(font_file, 34)
         tw = draw.textlength(credit, font=font)
-        x0, y0 = 28, 28
+        x0, y0 = 40, credit_y
         draw.rounded_rectangle([x0, y0, x0 + tw + 36, y0 + 58], radius=29, fill=config.BLACK + "CC")
         draw.text((x0 + 18, y0 + 29), credit, font=font, anchor="lm", fill=config.PINK)
 

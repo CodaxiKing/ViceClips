@@ -192,6 +192,8 @@ def finish_connect(platform: str, state: str, code: str) -> None:
         code_status, _, reply = _http("POST", INSTAGRAM_TOKEN, form={
             "client_id": client_id, "client_secret": client_secret, "grant_type": "authorization_code",
             "redirect_uri": redirect, "code": code})
+        if isinstance(reply.get("data"), list) and reply["data"]:
+            reply = reply["data"][0]        # a documentação mostra a resposta dentro de "data": [...]
         if code_status != 200 or "access_token" not in reply:
             raise _fail(platform, code_status, reply)
         user_id = str(reply.get("user_id", ""))
@@ -275,11 +277,11 @@ def valid_public(name: str, expires: int, token: str) -> bool:
 
 # ---------- envio para cada plataforma ----------
 
-def _youtube(video: Path, caption: str) -> str:
+def _youtube(video: Path, caption: str, private: bool = False) -> str:
     account = _token("youtube")
     title = (caption.splitlines()[0] if caption.strip() else "Clip")[:95]
     meta = {"snippet": {"title": title, "description": caption + "\n\n#Shorts", "categoryId": "20"},
-            "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}}
+            "status": {"privacyStatus": "private" if private else "public", "selfDeclaredMadeForKids": False}}
     auth = {"Authorization": f"Bearer {account['access']}"}
     code, headers, reply = _http("POST", YOUTUBE_UPLOAD, params={"uploadType": "resumable", "part": "snippet,status"},
                                  body=meta, headers={**auth, "X-Upload-Content-Type": "video/mp4",
@@ -290,18 +292,20 @@ def _youtube(video: Path, caption: str) -> str:
                            headers={**auth, "Content-Type": "video/mp4"}, timeout=600)
     if code not in (200, 201) or "id" not in reply:
         raise _fail("youtube", code, reply)
-    return f"https://youtube.com/shorts/{reply['id']}"
+    return f"https://youtube.com/shorts/{reply['id']}" + (" (privado)" if private else "")
 
 
-def _tiktok(video: Path, caption: str) -> str:
+def _tiktok(video: Path, caption: str, private: bool = False) -> str:
     account = _token("tiktok")
     auth = {"Authorization": f"Bearer {account['access']}"}
     code, _, info = _http("POST", TIKTOK_API + "/v2/post/publish/creator_info/query/", body={}, headers=auth)
     if code != 200:
         raise _fail("tiktok", code, info)
     options = info.get("data", {}).get("privacy_level_options") or ["SELF_ONLY"]
-    # Apps ainda não auditados pelo TikTok só podem postar como privado.
-    privacy = "PUBLIC_TO_EVERYONE" if "PUBLIC_TO_EVERYONE" in options else options[0]
+    if private:
+        privacy = "SELF_ONLY"
+    else:       # o mais aberto que a conta permite (conta privada não oferece "público")
+        privacy = next((p for p in ("PUBLIC_TO_EVERYONE", "FOLLOWER_OF_CREATOR") if p in options), options[0])
     size = video.stat().st_size
     chunk = size if size <= TIKTOK_CHUNK * 2 else TIKTOK_CHUNK
     count = max(1, size // chunk)          # o último pedaço leva a sobra
@@ -312,6 +316,10 @@ def _tiktok(video: Path, caption: str) -> str:
                         "total_chunk_count": count}})
     upload_url = reply.get("data", {}).get("upload_url")
     if code != 200 or not upload_url:
+        if "unaudited" in json.dumps(reply):
+            raise PublishError("TikTok recusou: o app ainda não foi auditado pelo TikTok. Até a auditoria, só é "
+                               "possível postar como privado e com a conta do TikTok configurada como privada. "
+                               "Marque \"Postar como privado (teste)\" e tente de novo.")
         raise _fail("tiktok", code, reply)
     with video.open("rb") as fh:
         for i in range(count):
@@ -321,10 +329,12 @@ def _tiktok(video: Path, caption: str) -> str:
                 "Content-Type": "video/mp4", "Content-Range": f"bytes {start}-{start + len(data) - 1}/{size}"})
             if code not in (200, 201, 206):
                 raise _fail("tiktok", code, sent)
-    return "privado no TikTok (app ainda não auditado)" if privacy == "SELF_ONLY" else "publicado no TikTok"
+    return "enviado ao TikTok como privado (só você vê)" if privacy == "SELF_ONLY" else "enviado ao TikTok"
 
 
-def _instagram(video: Path, caption: str) -> str:
+def _instagram(video: Path, caption: str, private: bool = False) -> str:
+    if private:
+        raise PublishError("O Instagram não tem post privado: desmarque o Instagram no teste, ou publique de verdade.")
     account = _token("instagram")
     base, user, token = account["base"], account["user_id"], account["access"]
     code, _, reply = _http("POST", f"{INSTAGRAM_GRAPH}/{user}/media", form={
@@ -371,7 +381,8 @@ def _save_posts(items: list[dict]) -> None:
     _write(_posts_file(), items[-200:])
 
 
-def schedule(clip: str, title: str | None, platforms: list[str], caption: str, when: float | None) -> dict:
+def schedule(clip: str, title: str | None, platforms: list[str], caption: str, when: float | None,
+             private: bool = False) -> dict:
     connected = accounts()
     for platform in platforms:
         if platform not in PLATFORMS:
@@ -381,6 +392,7 @@ def schedule(clip: str, title: str | None, platforms: list[str], caption: str, w
     if not platforms:
         raise PublishError("Escolha pelo menos uma plataforma.")
     post = {"id": uuid.uuid4().hex[:10], "clip": clip, "title": title, "caption": caption.strip(),
+            "private": private,
             "when": when or time.time(), "created": time.time(),
             "targets": {p: {"status": "agendado", "detail": None} for p in platforms}}
     with _lock:
@@ -411,7 +423,7 @@ def run_due(now: float | None = None) -> None:
             try:
                 if not video.exists():
                     raise PublishError("O clip não existe mais no servidor.")
-                detail, state = SENDERS[platform](video, post["caption"]), "publicado"
+                detail, state = SENDERS[platform](video, post["caption"], post.get("private", False)), "publicado"
             except PublishError as exc:
                 detail, state = str(exc), "erro"
             except Exception as exc:      # um erro inesperado não pode travar os outros posts
