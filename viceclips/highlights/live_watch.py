@@ -1,71 +1,149 @@
-"""Clip automático na live ao vivo: vigia o buffer e avisa quando o áudio dispara.
+"""Clip automático na live ao vivo.
 
-O pico (grito, risada, susto) é comparado com o volume normal da própria live.
-Depois de um pico, espera alguns segundos de "depois" e pede o corte que cobre
-do "antes" até ali.
+Vigia o buffer, mede o áudio de cada segmento novo (ver analysis.py) e, quando
+aparece um momento, espera a reação esfriar e pede o corte. Se houver chat da
+Twitch, ele reforça a nota, ajuda a classificar e também dispara clips sozinho
+quando explode sem o áudio ter subido (o streamer rindo baixo, por exemplo).
 """
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
 
 from ..ingest.live import _buffer_segments
-from .audio import loudness_per_second
+from . import analysis
+from .analysis import FUNNY, IMPACT
+from .chat import ChatMeter
 
-PRE_SECONDS = 20     # quanto do "antes" do pico entra no clip
-POST_SECONDS = 10    # quanto do "depois"
-
-
-class PeakDetector:
-    """Recebe o volume segundo a segundo e devolve os instantes que são picos."""
-
-    def __init__(self, warmup: int = 45, cooldown: int = 60, z: float = 2.5,
-                 ratio: float = 1.8, history: int = 600):
-        self.warmup, self.cooldown, self.z, self.ratio, self.history = warmup, cooldown, z, ratio, history
-        self.rms: list[float] = []
-        self.offset = 0          # segundos já descartados do início
-        self.checked = 0         # até onde (tempo absoluto) já foi avaliado
-        self.last_peak = -10**9
-
-    @property
-    def total(self) -> int:
-        return self.offset + len(self.rms)
-
-    def feed(self, values) -> list[int]:
-        self.rms.extend(float(v) for v in values)
-        if len(self.rms) > self.history:
-            drop = len(self.rms) - self.history
-            self.rms, self.offset = self.rms[drop:], self.offset + drop
-        arr = np.array(self.rms)
-        peaks = []
-        if len(arr):
-            median, std = float(np.median(arr)), float(arr.std()) + 1e-6
-            for i in range(max(self.checked - self.offset, 0), len(arr)):
-                t = i + self.offset
-                if t < self.warmup or t - self.last_peak < self.cooldown:
-                    continue
-                if arr[i] > median * self.ratio and (arr[i] - median) / std > self.z:
-                    peaks.append(t)
-                    self.last_peak = t
-        self.checked = self.total
-        return peaks
+WARMUP = analysis.WARMUP
+COOLDOWN = 45        # intervalo mínimo entre dois clips automáticos
+BUDGET_WINDOW = 1800  # em meia hora...
+BUDGET_MAX = 8        # ...no máximo este número de clips automáticos
+HISTORY = 600        # segundos de medidas mantidos em memória
+CHAT_RATIO = 3.0     # chat N vezes mais rápido que o normal = explosão
+CHAT_MIN_MESSAGES = 8
+CHAT_LAG = 6         # o chat reage alguns segundos depois do que aconteceu
 
 
 class LiveWatcher(threading.Thread):
-    """Lê os segmentos novos do buffer e chama on_highlight(segundos_a_cortar)."""
+    """Chama on_highlight(segundos_a_cortar, tipo, nota) a cada momento encontrado."""
 
-    def __init__(self, buffer_dir: Path, on_highlight, poll: float = 3.0):
+    def __init__(self, buffer_dir: Path, on_highlight, chat: ChatMeter | None = None,
+                 poll: float = 3.0):
         super().__init__(daemon=True)
-        self.buffer_dir, self.on_highlight, self.poll = buffer_dir, on_highlight, poll
-        self.detector = PeakDetector()
-        self.pending: list[int] = []
+        self.buffer_dir, self.on_highlight, self.chat, self.poll = buffer_dir, on_highlight, chat, poll
+        self.feats = np.zeros((0, 3), np.float32)
+        self.offset = 0                       # segundos já descartados do início
+        self.checked = 0                      # até onde (tempo da live) já procurou momentos
+        self.last_trigger = -10**9
+        self.pending: dict | None = None      # momento esperando a reação esfriar
         self.clips = 0
+        self.recent: list[tuple[int, float]] = []  # (segundo, nota) dos clips recentes
+        self.clock: list[tuple[int, float]] = []   # (segundo da live, relógio) para alinhar o chat
         self._seen: set[tuple[str, int]] = set()
         self._halt = threading.Event()
 
+    @property
+    def total(self) -> int:
+        return self.offset + len(self.feats)
+
     def stop(self) -> None:
         self._halt.set()
+
+    def feed(self, feats: np.ndarray) -> None:
+        self.feats = np.concatenate([self.feats, feats])
+        if len(self.feats) > HISTORY:
+            drop = len(self.feats) - HISTORY
+            self.feats, self.offset = self.feats[drop:], self.offset + drop
+        self.clock = (self.clock + [(self.total, time.time())])[-200:]
+
+    def _wall_time(self, second: int) -> float:
+        """Relógio aproximado em que o segundo `second` da live foi gravado."""
+        mark, wall = min(self.clock, key=lambda item: abs(item[0] - second))
+        return wall + (second - mark)
+
+    def _chat_burst(self, second: int) -> dict | None:
+        if not self.chat or not self.clock:
+            return None
+        return self.chat.burst(self._wall_time(second))
+
+    def evaluate(self) -> None:
+        if len(self.feats) < 12:
+            return
+        s = analysis.score(self.feats)
+
+        if self.pending is None:
+            first = max(self.checked, WARMUP, self.last_trigger + COOLDOWN) - self.offset
+            for i in range(max(first, 0), len(self.feats)):
+                if analysis.is_moment(s, i, analysis.MILD_LIFT):
+                    self.pending = {"peak": i + self.offset, "score": float(s["score"][i]), "audio": True}
+                    break
+            if self.pending is None:
+                self._chat_only_trigger()
+            self.checked = self.total
+
+        if self.pending is None:
+            return
+        peak = self.pending["peak"] - self.offset
+        if peak < 0:                                   # saiu do histórico: desiste
+            self.pending = None
+            return
+        # Se a reação ainda está crescendo, acompanha o pico mais alto.
+        upto = min(len(self.feats), peak + 6)
+        best = peak + int(np.argmax(s["score"][peak:upto]))
+        if s["score"][best] > self.pending["score"]:
+            self.pending.update(peak=best + self.offset, score=float(s["score"][best]))
+            peak = best
+        if not analysis.reaction_over(s, peak):
+            return
+
+        start, _ = analysis.window(s, peak)
+        kind = analysis.classify(s, peak) if self.pending["audio"] else self.pending["kind"]
+        score = self.pending["score"]
+        burst = self._chat_burst(self.pending["peak"])
+        chat_reacted = bool(burst and burst["ratio"] >= 2 and burst["messages"] >= CHAT_MIN_MESSAGES)
+        if chat_reacted:
+            score += min(burst["ratio"], 6)
+            if burst["laughs"] >= 0.3:
+                kind = FUNNY
+            elif burst["hype"] >= 0.3:
+                kind = IMPACT
+        moment, audio_only = self.pending["peak"], self.pending["audio"]
+        self.pending = None
+        # Som só um pouco acima do normal não basta sozinho: precisa do chat junto.
+        if audio_only and not chat_reacted and s["lift"][peak] < analysis.MIN_LIFT:
+            return
+        if not self._within_budget(moment, score):
+            return
+        self.last_trigger = moment
+        self.recent.append((moment, score))
+        self.on_highlight(float(len(self.feats) - start), kind, round(score, 1))
+        self.clips += 1
+
+    def _within_budget(self, moment: int, score: float) -> bool:
+        """Numa live agitada, fica só com os melhores em vez de clipar tudo."""
+        self.recent = [(t, sc) for t, sc in self.recent if moment - t < BUDGET_WINDOW]
+        if len(self.recent) >= BUDGET_MAX:
+            return False
+        if len(self.recent) >= BUDGET_MAX // 2:
+            return score > float(np.median([sc for _, sc in self.recent]))
+        return True
+
+    def _chat_only_trigger(self) -> None:
+        """Chat explodiu sem pico de áudio: clipa o que veio logo antes."""
+        second = self.total - WINDOW_BEHIND
+        if second < max(WARMUP, self.last_trigger + COOLDOWN):
+            return
+        burst = self._chat_burst(second)
+        if not burst or burst["ratio"] < CHAT_RATIO or burst["messages"] < CHAT_MIN_MESSAGES:
+            return
+        if max(burst["laughs"], burst["hype"]) < 0.3:
+            return   # chat rápido, mas não é reação (comando, spam, enquete)
+        kind = FUNNY if burst["laughs"] >= burst["hype"] else IMPACT
+        self.pending = {"peak": max(second - CHAT_LAG, self.offset), "score": min(burst["ratio"], 6) + 3,
+                        "audio": False, "kind": kind}
 
     def step(self) -> None:
         playlist = self.buffer_dir / "buffer.m3u8"
@@ -77,14 +155,10 @@ class LiveWatcher(threading.Thread):
                 if key in self._seen:
                     continue
                 self._seen.add(key)
-                self.pending += self.detector.feed(loudness_per_second(str(seg)))
+                self.feed(analysis.audio_features(str(seg)))
             except (OSError, ValueError, subprocess.SubprocessError):
                 continue  # segmento sumiu ou veio corrompido: segue para o próximo
-        now = self.detector.total
-        for peak in [p for p in self.pending if now >= p + POST_SECONDS]:
-            self.pending.remove(peak)
-            self.on_highlight(float(now - (peak - PRE_SECONDS)))
-            self.clips += 1
+        self.evaluate()
 
     def run(self) -> None:
         while not self._halt.wait(self.poll):
@@ -92,3 +166,6 @@ class LiveWatcher(threading.Thread):
                 self.step()
             except Exception:
                 pass  # o vigia nunca deve derrubar a gravação
+
+
+WINDOW_BEHIND = 12   # o chat-only olha a janela que terminou há pouco

@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from .. import config
 from ..config import Rect
+from ..highlights.chat import ChatMeter, TwitchChat, twitch_channel
 from ..highlights.live_watch import LiveWatcher
 from ..ingest import live, vod
 from ..media import frame_jpeg, parse_time, probe
@@ -180,6 +181,7 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
     out.with_suffix(".jpg").write_bytes(frame_jpeg(path, duration / 2, width=360))
     out.with_suffix(".json").write_text(json.dumps({
         "name": name, "title": title, "credit": opts.get("credit"), "source": source,
+        "kind": opts.get("kind"), "score": opts.get("score"),
         "duration": round(duration, 1), "created": time.time()}))
     job["clips"].append(name)
 
@@ -245,19 +247,24 @@ def create_vod(req: VodRequest) -> dict:
 
 def _work_vod(job: dict) -> None:
     p, stamp = job["params"], job["id"]
-    url, windows = p["url"], [p["window"]]
+    url = p["url"]
+    # Cada item: (início, fim, opções do clip). No automático as opções levam tipo e nota.
+    windows = [(*p["window"], p["opts"])] if p["window"] else []
     if p["auto"]:
         from ..highlights.audio import find_highlights
         job["step"] = "Baixando áudio da live"
         audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a")
-        job["step"] = "Procurando melhores momentos"
-        windows = [(s, e) for s, e, _ in find_highlights(str(audio), count=p["auto"])]
+        job["step"] = "Analisando a live inteira"
+        windows = [(m.start, m.end, {**p["opts"], "kind": m.kind, "score": m.score})
+                   for m in find_highlights(str(audio), count=p["auto"])]
+        audio.unlink(missing_ok=True)
         if not windows:
-            raise RuntimeError("Nenhum pico de áudio encontrado; use o modo por intervalo.")
-    for i, (start, end) in enumerate(windows, 1):
+            raise RuntimeError("Não achei nenhum momento marcante nessa live; "
+                               "tente o modo por intervalo.")
+    for i, (start, end, opts) in enumerate(windows, 1):
         job["step"] = f"Baixando trecho {i}/{len(windows)}"
         raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
-        _render(job, raw, f"clip_{stamp}_{i}", p["opts"], url)
+        _render(job, raw, f"clip_{stamp}_{i}", opts, url)
 
 
 def _work_file(job: dict) -> None:
@@ -312,8 +319,9 @@ def _live_status() -> dict:
     running = bool(proc and proc.poll() is None)
     # ffmpeg saiu com erro sem gravar nada: o link não é uma live que dê para ler.
     failed = bool(proc and not running and proc.returncode and buffered == 0)
-    watcher = _live["watcher"]
+    watcher, chat = _live["watcher"], _live.get("chat")
     return {"running": running, "failed": failed, "url": _live["url"],
+            "chat": bool(chat and chat.connected),
             "auto": bool(watcher), "auto_clips": watcher.clips if watcher else 0,
             "started": _live["started"], "buffered": round(buffered),
             "capacity": live.SEGMENT_SECONDS * live.BUFFER_SEGMENTS}
@@ -338,11 +346,19 @@ def _start_live(url: str, auto: bool, credit: str | None) -> dict:
         _live["proc"] = live.record(url, _live_dir())
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
-    _live.update(url=url, started=time.time(), watcher=None)
+    _live.update(url=url, started=time.time(), watcher=None, chat=None)
     if auto:
         opts = _options(None, credit, None)
-        _live["watcher"] = LiveWatcher(
-            _live_dir(), lambda seconds: _clip_from_live(min(seconds, MAX_CLIP_SECONDS), opts))
+        meter, channel = None, twitch_channel(url)
+        if channel:   # o chat da Twitch reforça a análise; sem ele segue só o áudio
+            meter = ChatMeter()
+            _live["chat"] = TwitchChat(channel, meter)
+            _live["chat"].start()
+
+        def on_highlight(seconds: float, kind: str, score: float) -> None:
+            _clip_from_live(min(seconds, MAX_CLIP_SECONDS), {**opts, "kind": kind, "score": score})
+
+        _live["watcher"] = LiveWatcher(_live_dir(), on_highlight, chat=meter)
         _live["watcher"].start()
     return _live_status()
 
@@ -353,8 +369,9 @@ def live_stop() -> dict:
     if proc and proc.poll() is None:
         proc.terminate()
         proc.wait(timeout=10)
-    if _live["watcher"]:
-        _live["watcher"].stop()
+    for worker in (_live["watcher"], _live.get("chat")):
+        if worker:
+            worker.stop()
     return _live_status()
 
 

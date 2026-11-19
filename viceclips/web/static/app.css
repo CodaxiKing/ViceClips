@@ -206,3 +206,8 @@ label.check input { width: 20px; height: 20px; padding: 0; accent-color: var(--p
 .topbar { padding-top: max(8px, env(safe-area-inset-top)); }
 .sidebar { padding-top: max(24px, env(safe-area-inset-top)); padding-bottom: max(24px, env(safe-area-inset-bottom)); }
 main { padding-bottom: max(64px, env(safe-area-inset-bottom)); }
+
+/* ---------- tipo do momento ---------- */
+.kind { align-self: flex-start; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.kind.funny { background: rgba(255, 196, 61, 0.16); color: #ffc43d; }
+.kind.impact { background: var(--pink-soft); color: var(--pink); }

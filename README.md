@@ -131,7 +131,9 @@ viceclips/
   ingest/vod.py        download de trechos de lives gravadas (yt-dlp)
   ingest/live.py       buffer circular da live + corte dos últimos N segundos
   detect/webcam.py     localização da facecam (rosto estável + bordas fixas)
-  highlights/audio.py  candidatos a clip por pico de áudio (live gravada)
+  highlights/analysis.py  análise do áudio: nível, agudos e rajadas vs. o normal da live
+  highlights/chat.py   chat da Twitch ao vivo como sinal (leitura anônima)
+  highlights/audio.py  melhores momentos de uma live gravada
   highlights/live_watch.py  clip automático na live ao vivo
   ai/transcribe.py     transcrição da fala (faster-whisper)
   ai/title.py          título curto a partir de frames + transcrição (Claude)

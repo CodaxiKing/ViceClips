@@ -39,10 +39,25 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 
 ### Fase 3: highlights melhores
 
-- [ ] Pico de mensagens no chat (Twitch IRC / chat replay do YouTube)
+Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py`):
+
+- Por segundo de áudio mede nível, agudos (grito/risada) e rajadas, sempre em relação ao
+  "normal" dos 3 minutos anteriores da própria live.
+- Um momento precisa ficar 10 dB acima do normal (6 dB se o chat também reagir).
+- O corte começa numa pausa da fala 12 a 25 s antes e termina quando a reação esfria.
+- Ao vivo, o chat da Twitch (leitura anônima) reforça a nota, decide entre "engraçado" e
+  "impactante" e dispara clip sozinho quando explode de risada.
+- Ao vivo há um teto de 8 clips automáticos por meia hora; passando da metade, só entram
+  os que superam a mediana dos anteriores.
+
+- [x] Análise multi-sinal do áudio com cortes ajustados ao momento
+- [x] Pico de mensagens no chat da Twitch ao vivo
+
+- [ ] Chat de lives gravadas e de YouTube/Kick (a Twitch não expõe mais o replay pelo yt-dlp)
 - [ ] Palavras-gatilho na transcrição ("no way", "meu deus", risadas)
 - [x] Na live ao vivo: clip automático quando o áudio dispara (interface web)
-- [ ] IA para ranquear os candidatos e ajustar início e fim do corte
+- [ ] IA para entender o conteúdo (frames + transcrição) e descartar falsos positivos;
+      é o que falta para separar "engraçado" de "impactante" com confiança sem chat
 
 ### Fase 4: acabamento do vídeo
 

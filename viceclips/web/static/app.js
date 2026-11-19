@@ -146,7 +146,7 @@ function renderLive(live) {
     : "Conectando à live; os primeiros segundos chegam em instantes.";
   const n = live.auto_clips;
   $("#live-auto").textContent = live.auto
-    ? `Clip automático ligado · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
+    ? `Clip automático ligado${live.chat ? " (áudio + chat da Twitch)" : " (áudio)"} · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
     : "Clip automático desligado.";
   $("#live-stop").hidden = !live.running;
 }
@@ -208,6 +208,8 @@ function renderClips(clips) {
     });
     return el("article", { className: "clip" }, thumb,
       el("div", { className: "clip-body" },
+        ...(clip.kind ? [el("span", { className: `kind ${clip.kind === "engraçado" ? "funny" : "impact"}`,
+          textContent: clip.kind === "engraçado" ? "😂 Engraçado" : "💥 Impactante" })] : []),
         ...(title ? [el("div", { className: "clip-title", textContent: title })] : []),
         el("div", { className: "actions" },
           el("a", { className: "btn primary small", href: `/media/${clip.name}.mp4?download=1`, textContent: "Baixar" }),

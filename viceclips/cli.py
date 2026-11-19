@@ -40,7 +40,7 @@ def cmd_vod(args) -> None:
     if args.auto:
         from .highlights.audio import find_highlights
         audio = vod.download_audio(args.url, config.WORK_DIR / f"vod_{stamp}.m4a")
-        windows = [(s, e) for s, e, _ in find_highlights(str(audio), count=args.auto)]
+        windows = [(m.start, m.end) for m in find_highlights(str(audio), count=args.auto)]
         if not windows:
             raise SystemExit("Nenhum pico encontrado; informe --start/--end.")
     elif args.start and args.end:
