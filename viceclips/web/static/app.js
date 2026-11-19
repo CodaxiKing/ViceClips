@@ -190,8 +190,8 @@ function renderClips(clips) {
     return;
   }
   grid.replaceChildren(...clips.map((clip) => {
-    const title = clip.title || "Sem título";
-    const thumb = el("button", { className: "thumb", ariaLabel: `Assistir: ${title}` },
+    const title = clip.title;  // sem título, o card não mostra nada no lugar
+    const thumb = el("button", { className: "thumb", ariaLabel: title ? `Assistir: ${title}` : "Assistir clip" },
       el("img", { src: `/media/${clip.name}.jpg`, alt: "", loading: "lazy" }),
       el("span", { className: "dur", textContent: clock(clip.duration) }));
     thumb.addEventListener("click", () => {
@@ -201,13 +201,13 @@ function renderClips(clips) {
     });
     const remove = el("button", { className: "btn ghost small", textContent: "Excluir" });
     remove.addEventListener("click", async () => {
-      if (!confirm(`Excluir o clip "${title}"?`)) return;
+      if (!confirm(title ? `Excluir o clip "${title}"?` : "Excluir este clip?")) return;
       await api(`/api/clips/${clip.name}`, { method: "DELETE" });
       refresh();
     });
     return el("article", { className: "clip" }, thumb,
       el("div", { className: "clip-body" },
-        el("div", { className: "clip-title", textContent: title }),
+        ...(title ? [el("div", { className: "clip-title", textContent: title })] : []),
         el("div", { className: "actions" },
           el("a", { className: "btn primary small", href: `/media/${clip.name}.mp4?download=1`, textContent: "Baixar" }),
           remove)));
@@ -235,6 +235,7 @@ async function refresh() {
 
 api("/api/session").then((session) => {
   $("#logout").hidden = !session.auth_required;
+  for (const node of $$(".ai-title")) node.hidden = !session.ai_titles;
 });
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });

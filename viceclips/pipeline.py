@@ -12,10 +12,13 @@ def _log(msg: str) -> None:
     print(f"[viceclips] {msg}", file=sys.stderr)
 
 
+def ai_titles_enabled() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
 def _auto_title(src: str) -> str | None:
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        _log("sem credencial Anthropic: clip sai sem título (use --title).")
-        return None
+    if not ai_titles_enabled():
+        return None  # sem chave da Anthropic o clip simplesmente sai sem título
     try:
         from .ai.title import generate_title
         from .ai.transcribe import transcribe

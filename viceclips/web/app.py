@@ -27,7 +27,7 @@ from ..config import Rect
 from ..highlights.live_watch import LiveWatcher
 from ..ingest import live, vod
 from ..media import frame_jpeg, parse_time, probe
-from ..pipeline import build_clip
+from ..pipeline import ai_titles_enabled, build_clip
 
 STATIC = Path(__file__).parent / "static"
 MAX_CLIP_SECONDS = 180
@@ -108,7 +108,8 @@ def logout(request: Request, response: Response) -> dict:
 
 @app.get("/api/session")
 def session(request: Request) -> dict:
-    return {"auth_required": bool(PASSWORD), "authed": _authed(request)}
+    return {"auth_required": bool(PASSWORD), "authed": _authed(request),
+            "ai_titles": ai_titles_enabled()}
 
 
 # ---------- jobs ----------

@@ -38,6 +38,17 @@ def test_vod_rejects_bad_input(body):
     assert client.post("/api/clips/vod", json=body).status_code == 422
 
 
+def test_no_title_without_anthropic_key(monkeypatch):
+    from viceclips import pipeline
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "")
+    assert pipeline._auto_title("qualquer.mp4") is None
+    assert client.get("/api/session").json()["ai_titles"] is False
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    assert client.get("/api/session").json()["ai_titles"] is True
+
+
 def test_clip_names_cannot_escape_out_dir():
     assert client.get("/media/..%2F..%2Fpyproject.mp4").status_code == 404
     assert client.delete("/api/clips/..%2Fsecret").status_code == 404
