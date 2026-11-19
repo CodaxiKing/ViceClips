@@ -41,7 +41,7 @@ from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession
 STATIC = Path(__file__).parent / "static"
 CLIP_NAME = re.compile(r"^clip_[0-9a-z_]+$")
 # Minutos até um clip pronto ser apagado; 0 guarda para sempre.
-CLIP_TTL = int(os.environ.get("VICECLIPS_CLIP_TTL_MINUTES", "10")) * 60
+CLIP_TTL = int(os.environ.get("VICECLIPS_CLIP_TTL_MINUTES", "60")) * 60
 STALE_WORK_SECONDS = 2 * 3600      # sobras de processamento interrompido
 PASSWORD = os.environ.get("VICECLIPS_PASSWORD", "")
 SESSION_COOKIE = "viceclips_session"
@@ -257,7 +257,8 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str, words: lis
     activity.log(f"Clip pronto ({round(duration)} s)" + (f": {title}" if title else ""), "ok", job["label"])
 
     what = {"engraçado": "Momento engraçado", "impactante": "Momento impactante"}.get(opts.get("kind"), "Clip")
-    minutes = f" Fica disponível por {CLIP_TTL // 60} min." if CLIP_TTL else ""
+    keep = "1 hora" if CLIP_TTL == 3600 else f"{CLIP_TTL // 60} min"
+    minutes = f" Fica disponível por {keep}." if CLIP_TTL else ""
     push.notify("Clip pronto", f"{title or what} · {job['label'][:40]}.{minutes}")
     return True
 
@@ -592,7 +593,7 @@ class Favorite(BaseModel):
 
 @app.post("/api/clips/{name}/favorite")
 def favorite_clip(name: str, req: Favorite) -> dict:
-    """Favorito não é apagado pela faxina dos 10 minutos."""
+    """Favorito não é apagado pela faxina automática."""
     meta_path = _clip_file(name, ".json")
     meta = json.loads(meta_path.read_text())
     meta["favorite"] = req.on

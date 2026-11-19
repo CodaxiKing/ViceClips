@@ -47,7 +47,7 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
 - **Servidor**: disco, processador, memória, fila, tempo por clip e erros recentes.
 - **Meus clips**: assistir, baixar (um ou todos em .zip), favoritar (★ não é apagado),
   avaliar (👍/👎), publicar e excluir. Cada clip é apagado sozinho
-  10 minutos depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
+  1 hora depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
 
 Os clips saem com legenda palavra por palavra (a palavra falada fica em rosa), feita por
 transcrição local, sem API. Só a fala do streamer é legendada: o diálogo do jogo, em
@@ -56,7 +56,7 @@ celular quando um clip fica pronto.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `VICECLIPS_CLIP_TTL_MINUTES` | `10` | minutos até apagar um clip pronto (`0` = nunca) |
+| `VICECLIPS_CLIP_TTL_MINUTES` | `60` | minutos até apagar um clip pronto (`0` = nunca) |
 | `VICECLIPS_CAPTIONS` | `1` | `0` desliga as legendas |
 | `VICECLIPS_CAPTION_LANG` | `pt` | idioma do streamer; só fala nesse idioma vira legenda (vazio = legenda tudo) |
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
@@ -91,7 +91,7 @@ aparece na própria tela Publicar.
 | TikTok | developers.tiktok.com → app com "Content Posting API" e escopo `video.publish` | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | App não auditado pelo TikTok: os posts saem **só para você** (privados) até a auditoria. |
 | Instagram Reels | developers.facebook.com → app com "Instagram API with Instagram Login" | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Precisa de conta **profissional** (Criador ou Empresa). Em modo de desenvolvimento funciona para as contas cadastradas como testadoras do app. |
 
-Um clip com post agendado não é apagado pela faxina dos 10 minutos; depois de publicado, volta
+Um clip com post agendado não é apagado pela faxina automática; depois de publicado, volta
 a valer o prazo normal. Os conectores foram testados contra um servidor que imita as APIs, não
 contra as plataformas reais: a primeira publicação de verdade é o teste final.
 

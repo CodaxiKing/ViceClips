@@ -248,6 +248,11 @@ function renderJobs(jobs) {
 }
 
 let clipsKey = "";
+function lifetime(minutes) {
+  if (minutes % 60 === 0) return minutes === 60 ? "1 hora" : `${minutes / 60} horas`;
+  return minutes === 1 ? "1 minuto" : `${minutes} minutos`;
+}
+
 function expiryText(seconds) {
   if (seconds == null) return "";
   if (seconds < 60) return "Apaga em menos de 1 min";
@@ -545,7 +550,7 @@ api("/api/session").then((session) => {
   for (const node of $$(".ai-title")) node.hidden = !session.ai_titles;
   if (session.clip_ttl_minutes) {
     $("#clips-lead").textContent =
-      `Baixe logo: cada clip é apagado ${session.clip_ttl_minutes} ${session.clip_ttl_minutes === 1 ? "minuto" : "minutos"} depois de ficar pronto.`;
+      `Cada clip é apagado ${lifetime(session.clip_ttl_minutes)} depois de ficar pronto. Favorite (★) os que quiser guardar.`;
   }
 });
 api("/api/ratings").then(renderRatings).catch(() => {});
