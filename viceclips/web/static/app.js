@@ -93,9 +93,10 @@ onSubmit($("#form-vod"), async (data) => {
   const body = { url: data.get("url"), title: data.get("title"), credit: data.get("credit"), cam: data.get("cam") };
   if (data.get("mode") === "auto") body.auto = Number(data.get("auto"));
   else Object.assign(body, { start: data.get("start"), end: data.get("end") });
-  await api("/api/clips/vod", { method: "POST", json: body });
-  location.hash = "fila";
-}, "Enviando…");
+  const result = await api("/api/clips/vod", { method: "POST", json: body });
+  // Link de live que está no ar: o servidor passa a acompanhá-la em vez de baixar.
+  location.hash = result.live ? "aovivo" : "fila";
+}, "Conferindo o link…");
 
 onSubmit($("#form-upload"), async (data) => {
   await api("/api/clips/upload", { method: "POST", body: data });

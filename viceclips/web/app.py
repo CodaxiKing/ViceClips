@@ -229,6 +229,17 @@ def create_vod(req: VodRequest) -> dict:
         if not 0 < window[1] - window[0] <= MAX_CLIP_SECONDS:
             raise HTTPException(422, f"O trecho deve ter entre 1 e {MAX_CLIP_SECONDS} segundos.")
 
+    try:
+        info = vod.probe(url)
+    except RuntimeError as exc:
+        raise HTTPException(422, str(exc))
+    if info["is_live"]:
+        # Link de live que está no ar: não há vídeo pronto para baixar; acompanha ao vivo.
+        _start_live(url, auto=True, credit=opts["credit"])
+        return {"live": True}
+    if window and info["duration"] and window[0] >= info["duration"]:
+        raise HTTPException(422, "O início informado passa do fim do vídeo.")
+
     return _submit("gravada", url, {"url": url, "window": window, "auto": req.auto, "opts": opts})
 
 
@@ -315,9 +326,12 @@ def live_status() -> dict:
 
 @app.post("/api/live/start")
 def live_start(req: LiveStart) -> dict:
-    url = _check_url(req.url)
+    return _start_live(_check_url(req.url), req.auto, req.credit)
+
+
+def _start_live(url: str, auto: bool, credit: str | None) -> dict:
     if _live_status()["running"]:
-        raise HTTPException(409, "Já existe uma live sendo gravada; pare-a antes.")
+        raise HTTPException(409, "Já existe uma live sendo acompanhada; pare-a na tela Ao vivo antes.")
     for old in _live_dir().glob("*"):
         old.unlink()
     try:
@@ -325,8 +339,8 @@ def live_start(req: LiveStart) -> dict:
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
     _live.update(url=url, started=time.time(), watcher=None)
-    if req.auto:
-        opts = _options(None, req.credit, None)
+    if auto:
+        opts = _options(None, credit, None)
         _live["watcher"] = LiveWatcher(
             _live_dir(), lambda seconds: _clip_from_live(min(seconds, MAX_CLIP_SECONDS), opts))
         _live["watcher"].start()

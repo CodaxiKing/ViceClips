@@ -49,6 +49,29 @@ def test_no_title_without_anthropic_key(monkeypatch):
     assert client.get("/api/session").json()["ai_titles"] is True
 
 
+def test_live_link_in_new_clip_starts_watching_instead_of_downloading(monkeypatch):
+    started = {}
+    monkeypatch.setattr(web.vod, "probe", lambda url: {"is_live": True, "duration": None})
+    monkeypatch.setattr(web, "_start_live", lambda url, auto, credit: started.update(url=url, auto=auto))
+    res = client.post("/api/clips/vod", json={"url": "https://twitch.tv/canal", "auto": 5})
+    assert res.json() == {"live": True}
+    assert started == {"url": "https://twitch.tv/canal", "auto": True}
+    assert web._jobs == {}
+
+
+def test_offline_channel_gets_a_useful_message(monkeypatch):
+    from viceclips.ingest.vod import friendly_error
+
+    message = friendly_error("ERROR: [twitch:stream] canal: The channel is not currently live")
+    assert "offline" in message and "twitch.tv/videos" in message
+
+    def offline(url):
+        raise RuntimeError(message)
+    monkeypatch.setattr(web.vod, "probe", offline)
+    res = client.post("/api/clips/vod", json={"url": "https://twitch.tv/canal", "auto": 5})
+    assert res.status_code == 422 and res.json()["detail"] == message
+
+
 def test_clip_names_cannot_escape_out_dir():
     assert client.get("/media/..%2F..%2Fpyproject.mp4").status_code == 404
     assert client.delete("/api/clips/..%2Fsecret").status_code == 404

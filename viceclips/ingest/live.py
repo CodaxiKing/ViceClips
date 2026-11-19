@@ -22,7 +22,8 @@ def resolve_stream_url(url: str) -> str:
         [sys.executable, "-m", "yt_dlp", "-g", "-f", "b[height<=1080]/b", url],
         capture_output=True, text=True)
     if out.returncode != 0:
-        raise RuntimeError(f"Não consegui abrir a live: {out.stderr.strip()[-500:]}")
+        from .vod import friendly_error
+        raise RuntimeError(friendly_error(out.stderr))
     return out.stdout.strip().splitlines()[0]
 
 
