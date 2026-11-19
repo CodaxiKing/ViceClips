@@ -150,8 +150,8 @@
       </form>
 
       <div class="card">
-        <h2>Canais acompanhados</h2>
-        <p class="hint">Cadastre os canais uma vez. Quando um deles entrar ao vivo, o ViceClips começa a gravar e clipar sozinho, sem você colar link.</p>
+        <h2>Canais salvos</h2>
+        <p class="hint">Todo canal que você acompanhar fica salvo aqui. Com "Gravar sozinho" ligado, o ViceClips começa a gravar e clipar assim que o canal entra ao vivo; desligado, o canal fica guardado e você reativa com um toque.</p>
         <div id="channels" class="rows"></div>
         <form id="form-channel">
           <div class="row">
@@ -245,6 +245,8 @@
     </form>
   </dialog>
 
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
   <dialog id="player">
     <video controls playsinline></video>
     <button class="btn ghost" id="player-close">Fechar</button>
@@ -285,6 +287,7 @@
         <p class="form-error" role="alert" hidden></p>
         <div class="actions">
           <button class="btn primary" type="submit">Clipar</button>
+          <button class="btn ghost live-auto-toggle" type="button">Desligar clips automáticos</button>
           <button class="btn ghost live-stop" type="button">Parar de acompanhar</button>
           <button class="btn ghost live-remove" type="button" hidden>Tirar da lista</button>
         </div>

@@ -7,6 +7,7 @@ CLIP_TTL segundos.
 
 Com VICECLIPS_PASSWORD definida, tudo exige login (cookie de sessão).
 """
+import hashlib
 import hmac
 import json
 import os
@@ -37,7 +38,7 @@ from ..media import frame_jpeg, parse_time, probe
 from ..pipeline import NoStreamer, ai_titles_enabled, build_clip
 from . import activity, publish, push
 from ..highlights.rate import SENSITIVITY
-from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession, sensitivity
+from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession, display_name, sensitivity
 
 STATIC = Path(__file__).parent / "static"
 CLIP_NAME = re.compile(r"^clip_[0-9a-z_]+$")
@@ -95,18 +96,31 @@ def _ratings_file() -> Path:
 
 # ---------- login ----------
 
-def _sessions() -> list[str]:
-    try:
-        return json.loads(_sessions_file().read_text())
-    except (OSError, ValueError):
-        return []
+SESSION_DAYS = 365
+
+
+def _sign(expires: int) -> str:
+    """Assinatura do cookie de sessão, derivada da senha do site.
+
+    Nada fica guardado no servidor: o login sobrevive a reinícios e a novos deploys (antes
+    as sessões ficavam num arquivo e sumiam junto com ele). Trocar a senha encerra todas.
+    """
+    key = hashlib.sha256(b"viceclips-session:" + PASSWORD.encode()).digest()
+    return hmac.new(key, str(expires).encode(), hashlib.sha256).hexdigest()
+
+
+def _new_session() -> str:
+    expires = int(time.time()) + SESSION_DAYS * 86400
+    return f"{expires}.{_sign(expires)}"
 
 
 def _authed(request: Request) -> bool:
     if not PASSWORD:
         return True
-    token = request.cookies.get(SESSION_COOKIE, "")
-    return bool(token) and any(hmac.compare_digest(token, t) for t in _sessions())
+    expires, _, signature = request.cookies.get(SESSION_COOKIE, "").partition(".")
+    if not expires.isdigit() or int(expires) < time.time():
+        return False
+    return hmac.compare_digest(signature, _sign(int(expires)))
 
 
 @app.middleware("http")
@@ -137,19 +151,15 @@ def login(req: Login, request: Request, response: Response) -> dict:
         if not PASSWORD or not hmac.compare_digest(req.password.encode(), PASSWORD.encode()):
             time.sleep(1)
             raise HTTPException(401, "Senha incorreta.")
-        token = secrets.token_urlsafe(32)
-        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
-        _sessions_file().write_text(json.dumps((_sessions() + [token])[-20:]))
-    response.set_cookie(SESSION_COOKIE, token, max_age=30 * 86400, httponly=True,
-                        samesite="strict", secure=request.url.scheme == "https")
+    # "lax" (e não "strict"): o cookie também vale ao abrir o site por um link, por um aviso
+    # no celular ou pelo "Compartilhar" de outro app; com "strict" esses caminhos caíam no login.
+    response.set_cookie(SESSION_COOKIE, _new_session(), max_age=SESSION_DAYS * 86400, httponly=True,
+                        samesite="lax", secure=request.url.scheme == "https")
     return {"ok": True}
 
 
 @app.post("/api/logout")
 def logout(request: Request, response: Response) -> dict:
-    token = request.cookies.get(SESSION_COOKIE, "")
-    with _login_lock:
-        _sessions_file().write_text(json.dumps([t for t in _sessions() if t != token]))
     response.delete_cookie(SESSION_COOKIE)
     return {"ok": True}
 
@@ -512,7 +522,28 @@ def live_status() -> dict:
 
 @app.post("/api/live/start")
 def live_start(req: LiveStart) -> dict:
-    return _start_live(_check_url(req.url), req.auto, req.credit)
+    url, credit = _check_url(req.url), (req.credit or "").strip() or None
+    try:
+        manager.start(url, req.auto, credit)
+    except LiveError as exc:
+        if "offline" not in str(exc):
+            raise HTTPException(409, str(exc))
+        # Canal fora do ar não é erro: fica salvo e a gravação começa quando ele entrar.
+        manager.remember(url, credit, enabled=True)
+        return {**manager.status(), "notice": f"{display_name(url)} não está ao vivo agora. O canal ficou salvo: "
+                                              "começo a gravar sozinho quando ele entrar."}
+    return manager.status()
+
+
+class Switch(BaseModel):
+    on: bool
+
+
+@app.post("/api/live/{session_id}/auto")
+def live_auto(session_id: str, req: Switch) -> dict:
+    """Liga ou desliga os clips automáticos de uma live, sem parar de acompanhá-la."""
+    _live_session(session_id).set_auto(req.on)
+    return manager.status()
 
 
 @app.post("/api/live/{session_id}/stop")
@@ -563,6 +594,24 @@ def channel_add(req: Channel) -> dict:
     except LiveError as exc:
         raise HTTPException(409, str(exc))
     return manager.status()
+
+
+class ChannelSwitch(BaseModel):
+    url: str
+    on: bool
+
+
+@app.post("/api/channels/toggle")
+def channel_toggle(req: ChannelSwitch) -> dict:
+    manager.set_channel(req.url, req.on)
+    return manager.status()
+
+
+@app.post("/api/channels/start")
+def channel_start(req: Channel) -> dict:
+    """Tenta gravar o canal agora; se não houver live, só avisa."""
+    notice = manager.start_channel(req.url)      # primeiro tenta; o estado devolvido já inclui a nova live
+    return {**manager.status(), "notice": notice}
 
 
 @app.post("/api/channels/remove")

@@ -17,6 +17,13 @@ function el(tag, props = {}, ...children) {
   return node;
 }
 
+/** Aviso rápido no canto da tela, que some sozinho. */
+function toast(text, level = "info") {
+  const note = el("div", { className: `toast ${level}`, textContent: text });
+  $("#toasts").append(note);
+  setTimeout(() => note.remove(), 7000);
+}
+
 async function api(path, options = {}) {
   if (options.json) {
     options.body = JSON.stringify(options.json);
@@ -128,7 +135,9 @@ onSubmit($("#form-upload"), async (data) => {
 }, "Enviando vídeo…");
 
 onSubmit($("#form-live-start"), async (data) => {
-  renderLive(await api("/api/live/start", { method: "POST", json: { url: data.get("url"), auto: data.has("auto"), credit: data.get("credit") } }));
+  const result = await api("/api/live/start", { method: "POST", json: { url: data.get("url"), auto: data.has("auto"), credit: data.get("credit") } });
+  renderLive(result);
+  if (result.notice) toast(result.notice);      // canal fora do ar: só avisa, sem erro
   $("#form-live-start").reset();
 }, "Conectando…");
 
@@ -155,6 +164,11 @@ function liveCard(session) {
   }, "Cortando…");
   $(".live-stop", card).addEventListener("click", async () => {
     renderLive(await api(`/api/live/${session.id}/stop`, { method: "POST" }));
+  });
+  $(".live-auto-toggle", card).addEventListener("click", async () => {
+    const on = $(".live-auto-toggle", card).dataset.on !== "true";
+    renderLive(await api(`/api/live/${session.id}/auto`, { method: "POST", json: { on } }));
+    toast(on ? `Clips automáticos ligados em ${session.name}.` : `Clips automáticos desligados em ${session.name}. A live continua sendo acompanhada.`);
   });
   $(".live-remove", card).addEventListener("click", async () => {
     renderLive(await api(`/api/live/${session.id}`, { method: "DELETE" }));
@@ -210,6 +224,10 @@ function renderLive(live) {
       option.disabled = Number(option.value) > 0 && Number(option.value) + 20 > session.buffered;   // ainda não há tanto guardado
     }
     $("button[type=submit]", card).hidden = session.buffered < 1;
+    const toggle = $(".live-auto-toggle", card);
+    toggle.hidden = !session.running;
+    toggle.dataset.on = session.auto;
+    toggle.textContent = session.auto ? "Desligar clips automáticos" : "Ligar clips automáticos";
     $(".live-stop", card).hidden = !session.running;
     $(".live-remove", card).hidden = session.running;
   }
@@ -226,15 +244,41 @@ function renderLive(live) {
     return;
   }
   rows.replaceChildren(...live.channels.map((channel) => {
+    const state = channel.recording ? ["GRAVANDO", ""] : !channel.enabled ? ["PAUSADO", "off"]
+      : channel.live ? ["AO VIVO", ""] : ["OFFLINE", "off"];
+    const send = (path, body) => api(path, { method: "POST", json: { url: channel.url, ...body } });
+
+    const record = el("button", { className: "btn ghost small", textContent: "Gravar agora" });
+    record.hidden = channel.recording;
+    record.addEventListener("click", async () => {
+      record.disabled = true;
+      record.textContent = "Conferindo…";
+      try {
+        const result = await send("/api/channels/start", {});
+        renderLive(result);
+        toast(result.notice, /comecei/.test(result.notice) ? "ok" : "info");   // sem live: só avisa
+      } catch (exc) {
+        toast(exc.message, "error");
+        refresh();
+      }
+    });
+    const follow = el("button", { className: `btn ghost small ${channel.enabled ? "on" : ""}`,
+      textContent: channel.enabled ? "Gravar sozinho: ligado" : "Gravar sozinho: desligado" });
+    follow.setAttribute("aria-pressed", channel.enabled);
+    follow.addEventListener("click", async () => {
+      renderLive(await send("/api/channels/toggle", { on: !channel.enabled }));
+      toast(channel.enabled ? `${channel.name} pausado. O canal continua salvo.`
+        : `${channel.name} reativado: gravo sozinho quando entrar ao vivo.`);
+    });
     const remove = el("button", { className: "btn ghost small", textContent: "Remover" });
     remove.addEventListener("click", async () => {
-      if (!confirm(`Parar de acompanhar o canal ${channel.name}?`)) return;
-      renderLive(await api("/api/channels/remove", { method: "POST", json: { url: channel.url } }));
+      if (!confirm(`Tirar o canal ${channel.name} da lista?`)) return;
+      renderLive(await send("/api/channels/remove", {}));
     });
     return el("div", { className: "channel" },
-      el("span", { className: `pill ${channel.live ? "" : "off"}`, textContent: channel.live ? "AO VIVO" : "OFFLINE" }),
+      el("span", { className: `pill ${state[1]}`, textContent: state[0] }),
       el("span", { className: "channel-name", textContent: channel.name, title: channel.url }),
-      remove);
+      el("span", { className: "channel-actions" }, record, follow, remove));
   }));
 }
 

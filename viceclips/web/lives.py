@@ -64,16 +64,22 @@ class LiveSession:
         self.proc = live.record(url, self.dir)     # levanta RuntimeError se o link não abrir
         self._proc_started = time.time()
         threading.Thread(target=self._keep_alive, daemon=True).start()
-        if auto:
-            meter, channel = None, twitch_channel(url)
-            if channel:   # o chat da Twitch reforça a análise; sem ele segue só o áudio
-                meter = ChatMeter()
-                self.chat = TwitchChat(channel, meter)
-                self.chat.start()
-            self.watcher = LiveWatcher(self.dir, self._highlight, chat=meter,
-                                       on_event=lambda text, level="info": activity.log(text, level, self.name))
-            self.watcher.rate.per_hour = SENSITIVITY[sensitivity()]
-            self.watcher.start()
+        meter, channel = None, twitch_channel(url)
+        if channel:   # o chat da Twitch reforça a análise; sem ele segue só o áudio
+            meter = ChatMeter()
+            self.chat = TwitchChat(channel, meter)
+            self.chat.start()
+        # O vigia roda sempre (vai aprendendo o volume normal); `enabled` decide se ele clipa.
+        self.watcher = LiveWatcher(self.dir, self._highlight, chat=meter,
+                                   on_event=lambda text, level="info": activity.log(text, level, self.name))
+        self.watcher.rate.per_hour = SENSITIVITY[sensitivity()]
+        self.watcher.enabled = auto
+        self.watcher.start()
+
+    def set_auto(self, on: bool) -> None:
+        self.auto = self.watcher.enabled = on
+        activity.log("Clips automáticos ligados" if on else
+                     "Clips automáticos desligados (a live continua sendo acompanhada)", "ok", self.name)
 
     def _highlight(self, seconds: float, kind: str, score: float, ago: float = 0.0) -> None:
         self.clip(min(seconds, MAX_CLIP_SECONDS),
@@ -148,7 +154,8 @@ class LiveSession:
             "running": running,
             # O gravador não conseguiu gravar nada: o link não é uma live que dê para ler.
             "failed": self.failed, "reconnects": self.reconnects,
-            "auto": bool(self.watcher), "auto_clips": self.watcher.clips if self.watcher else 0,
+            "auto": bool(self.watcher and self.watcher.enabled),
+            "auto_clips": self.watcher.clips if self.watcher else 0,
             "chat": bool(self.chat and self.chat.connected),
             "analysed": self.watcher.total if self.watcher else 0,
             "lift": round(self.watcher.lift, 1) if self.watcher else None,
@@ -190,6 +197,7 @@ class LiveManager:
                 activity.log(f"Não consegui abrir a live: {exc}", "error", display_name(url))
                 raise LiveError(str(exc))
             self.sessions[session.id] = session
+            self.remember(url, credit, enabled=origin == "canal")    # o link fica salvo para reativar depois
             activity.log("Começou a gravar a live" + (" (canal acompanhado entrou ao vivo)" if origin == "canal" else ""),
                          "ok", session.name)
             return session
@@ -224,8 +232,10 @@ class LiveManager:
             sessions = sorted(self.sessions.values(), key=lambda s: s.started)
         return {"sessions": [s.status() for s in sessions], "max": MAX_LIVES,
                 "sensitivity": sensitivity(), "sensitivities": SENSITIVITY,
-                "channels": [{**c, "name": display_name(c["url"]),
-                              "live": self._channel_live.get(c["url"], False)}
+                "channels": [{**c, "name": display_name(c["url"]), "enabled": c.get("enabled", True),
+                              "live": self._channel_live.get(c["url"], False),
+                              "recording": any(s.running and display_name(s.url) == display_name(c["url"])
+                                               for s in sessions)}
                              for c in self.channels()]}
 
     # ----- canais cadastrados -----
@@ -243,6 +253,46 @@ class LiveManager:
         config.WORK_DIR.mkdir(parents=True, exist_ok=True)
         self._channels_file().write_text(json.dumps(channels))
 
+    def remember(self, url: str, credit: str | None, enabled: bool) -> None:
+        """Guarda o canal na lista, se ainda não estiver nela (sem mexer no que já existe)."""
+        with self._lock:
+            channels = self.channels()
+            if any(display_name(c["url"]) == display_name(url) for c in channels) or len(channels) >= 20:
+                return
+            self._save_channels(channels + [{"url": url, "credit": credit, "enabled": enabled}])
+
+    def set_channel(self, url: str, enabled: bool) -> None:
+        """Liga ou desliga o "gravar sozinho quando entrar ao vivo" de um canal salvo."""
+        with self._lock:
+            channels = self.channels()
+            for channel in channels:
+                if channel["url"] == url:
+                    channel["enabled"] = enabled
+            self._save_channels(channels)
+            if not enabled:
+                self._channel_live.pop(url, None)
+        activity.log("Vou gravar sozinho quando entrar ao vivo" if enabled else
+                     "Canal pausado: fica salvo, mas não começa a gravar sozinho", "ok", display_name(url))
+        if enabled:
+            threading.Thread(target=self.check_channels, daemon=True).start()
+
+    def start_channel(self, url: str) -> str:
+        """Tenta gravar o canal agora. Devolve a frase que a tela mostra."""
+        name = display_name(url)
+        channel = next((c for c in self.channels() if c["url"] == url), {"url": url})
+        try:
+            is_live = vod.probe(url)["is_live"]
+        except RuntimeError:
+            is_live = False
+        self._channel_live[url] = is_live
+        if not is_live:
+            return f"{name} não está ao vivo agora."
+        try:
+            self.start(url, auto=True, credit=channel.get("credit"), origin="canal")
+        except LiveError as exc:
+            return str(exc)
+        return f"{name} está ao vivo: comecei a gravar."
+
     def add_channel(self, url: str, credit: str | None) -> None:
         with self._lock:
             channels = self.channels()
@@ -250,7 +300,7 @@ class LiveManager:
                 raise LiveError("Esse canal já está cadastrado.")
             if len(channels) >= 20:
                 raise LiveError("Limite de 20 canais cadastrados.")
-            self._save_channels(channels + [{"url": url, "credit": credit}])
+            self._save_channels(channels + [{"url": url, "credit": credit, "enabled": True}])
         activity.log("Canal cadastrado; vou conferir a cada 90 s se entrou ao vivo", "ok", display_name(url))
         threading.Thread(target=self.check_channels, daemon=True).start()   # confere já
 
@@ -263,6 +313,8 @@ class LiveManager:
         """Começa a acompanhar os canais cadastrados que entraram ao vivo."""
         for channel in self.channels():
             url = channel["url"]
+            if not channel.get("enabled", True):
+                continue               # pausado: fica salvo, mas não é conferido nem gravado
             with self._lock:
                 watching = any(s.running and display_name(s.url) == display_name(url)
                                for s in self.sessions.values())

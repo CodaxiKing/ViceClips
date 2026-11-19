@@ -47,6 +47,7 @@ class LiveWatcher(threading.Thread):
         self.last_trigger = -10**9
         self.pending: dict | None = None      # momento esperando a reação esfriar
         self.clips = 0
+        self.enabled = True                   # False: continua ouvindo e aprendendo, mas não clipa
         self.on_event = on_event or (lambda text, level="info": None)
         self.lift = 0.0                       # dB acima do normal no último segundo analisado
         self.peak_lift = 0.0                  # o maior desde o último clip
@@ -86,6 +87,9 @@ class LiveWatcher(threading.Thread):
         s = analysis.score(self.feats)
         self.lift = float(s["lift"][-1])
         self.peak_lift = max(self.peak_lift, float(s["lift"][-6:].max()))
+        if not self.enabled:
+            self.pending, self.checked = None, self.total
+            return
 
         if self.pending is None:
             first = max(self.checked, WARMUP, self.last_trigger + COOLDOWN) - self.offset

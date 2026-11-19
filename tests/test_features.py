@@ -519,3 +519,77 @@ def test_push_test_needs_a_subscribed_device(monkeypatch):
 
 def test_clips_expire_after_twenty_minutes_by_default():
     assert web.CLIP_TTL == 20 * 60
+
+
+def test_login_survives_a_redeploy_and_ends_when_the_password_changes(monkeypatch, tmp_path):
+    monkeypatch.setattr(web, "PASSWORD", "segredo")
+    monkeypatch.setattr(web.time, "sleep", lambda _: None)
+    browser = TestClient(web.app)
+    assert browser.post("/api/login", json={"password": "segredo"}).status_code == 200
+    cookie = browser.cookies.get("viceclips_session")
+
+    # "Novo deploy": disco zerado, nada guardado no servidor. O mesmo cookie continua valendo.
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "disco_novo")
+    again = TestClient(web.app, cookies={"viceclips_session": cookie})
+    assert again.get("/api/jobs").status_code == 200
+
+    forged = TestClient(web.app, cookies={"viceclips_session": cookie.split(".")[0] + "." + "0" * 64})
+    assert forged.get("/api/jobs").status_code == 401                 # assinatura inventada
+    old = TestClient(web.app, cookies={"viceclips_session": "1000." + web._sign(1000)})
+    assert old.get("/api/jobs").status_code == 401                    # vencido
+    monkeypatch.setattr(web, "PASSWORD", "outra")
+    assert again.get("/api/jobs").status_code == 401                  # trocar a senha encerra as sessões
+
+
+def test_session_cookie_lasts_a_year_and_works_when_opening_from_a_link(monkeypatch):
+    monkeypatch.setattr(web, "PASSWORD", "segredo")
+    header = TestClient(web.app).post("/api/login", json={"password": "segredo"}).headers["set-cookie"].lower()
+    assert "max-age=31536000" in header and "samesite=lax" in header and "httponly" in header
+
+
+def test_auto_clips_can_be_switched_off_for_one_live_without_stopping_it(fake_record):
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+    session_id = client.get("/api/live").json()["sessions"][0]["id"]
+    off = client.post(f"/api/live/{session_id}/auto", json={"on": False}).json()["sessions"][0]
+    assert off["auto"] is False and off["running"] is True
+    watcher = web.manager.get(session_id).watcher
+    assert watcher.enabled is False and watcher.is_alive()            # segue ouvindo, só não clipa
+    assert client.post(f"/api/live/{session_id}/auto", json={"on": True}).json()["sessions"][0]["auto"] is True
+
+
+def test_followed_live_is_saved_and_offline_channel_only_gives_a_notice(fake_record, monkeypatch):
+    monkeypatch.setattr(lives.threading, "Thread", lambda **kw: type("T", (), {"start": lambda self: None})())
+    # canal fora do ar: nada de erro; fica salvo e avisa
+    def offline(url, directory):
+        raise RuntimeError("O canal está offline. Para clipar uma live que já acabou, use o link do vídeo gravado.")
+    monkeypatch.setattr(lives.live, "record", offline)
+    res = client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_off", "auto": True})
+    assert res.status_code == 200 and "não está ao vivo" in res.json()["notice"]
+    saved = res.json()["channels"]
+    assert [(c["name"], c["enabled"]) for c in saved] == [("canal_off", True)] and res.json()["sessions"] == []
+
+    # pausar mantém o canal salvo, mas ele não é mais conferido
+    probed = []
+    monkeypatch.setattr(lives.vod, "probe", lambda url: probed.append(url) or {"is_live": False, "duration": None})
+    paused = client.post("/api/channels/toggle", json={"url": "https://www.twitch.tv/canal_off", "on": False}).json()
+    assert paused["channels"][0]["enabled"] is False
+    web.manager.check_channels()
+    assert probed == []
+
+    # "Gravar agora" sem live: só o aviso
+    notice = client.post("/api/channels/start", json={"url": "https://www.twitch.tv/canal_off"}).json()["notice"]
+    assert notice == "canal_off não está ao vivo agora." and len(probed) == 1
+
+
+def test_manually_followed_live_stays_in_the_saved_list_after_it_ends(fake_record, monkeypatch):
+    monkeypatch.setattr(lives.threading, "Thread", lambda **kw: type("T", (), {"start": lambda self: None})())
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+    status = client.get("/api/live").json()
+    assert [(c["name"], c["enabled"], c["recording"]) for c in status["channels"]] == [("canal_a", False, True)]
+    client.delete(f"/api/live/{status['sessions'][0]['id']}")
+    after = client.get("/api/live").json()
+    assert after["sessions"] == [] and [c["name"] for c in after["channels"]] == ["canal_a"]   # dá para reativar
+
+    monkeypatch.setattr(lives.vod, "probe", lambda url: {"is_live": True, "duration": None})
+    notice = client.post("/api/channels/start", json={"url": "https://www.twitch.tv/canal_a"}).json()
+    assert "comecei a gravar" in notice["notice"] and len(notice["sessions"]) == 1
