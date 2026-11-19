@@ -174,7 +174,8 @@ viceclips/
   highlights/analysis.py  análise do áudio: nível, agudos e rajadas vs. o normal da live
   highlights/chat.py   chat da Twitch ao vivo como sinal (leitura anônima)
   highlights/calibration.py  ajuste da exigência pelas avaliações 👍/👎
-  highlights/audio.py  melhores momentos de uma live gravada
+  highlights/audio.py  melhores momentos de uma live gravada (1ª etapa: áudio)
+  highlights/rerank.py 2ª etapa: nota de cada candidato pelo que ele mostra
   highlights/live_watch.py  clip automático na live ao vivo
   ai/transcribe.py     transcrição local da fala, com tempo por palavra (faster-whisper)
   ai/title.py          título curto a partir de frames + transcrição (Claude)

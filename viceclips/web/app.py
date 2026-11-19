@@ -211,7 +211,7 @@ def _resume_jobs() -> None:
             _executor.submit(_run, job)
 
 
-def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> bool:
+def _render(job: dict, src: Path, name: str, opts: dict, source: str, words: list | None = None) -> bool:
     """Renderiza `src` em OUT_DIR/name.mp4, grava capa e metadados e avisa o celular.
 
     Devolve False quando um clip automático é descartado por não mostrar o streamer.
@@ -225,7 +225,8 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> bool:
         path, title, detected = build_clip(str(src), out, title=opts.get("title"), cam=cam,
                                            credit=opts.get("credit"), log=step,
                                            known_cam=_known_cams.get(source),
-                                           require_streamer=opts.get("kind") is not None)
+                                           require_streamer=opts.get("kind") is not None,
+                                           words=words)
     except NoStreamer:
         src.unlink(missing_ok=True)
         return False
@@ -235,7 +236,8 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> bool:
     out.with_suffix(".jpg").write_bytes(frame_jpeg(path, duration / 2, width=360))
     out.with_suffix(".json").write_text(json.dumps({
         "name": name, "title": title, "credit": opts.get("credit"), "source": source,
-        "kind": opts.get("kind"), "score": opts.get("score"), "rating": None, "favorite": False,
+        "kind": opts.get("kind"), "score": opts.get("score"), "rank": opts.get("rank"),
+        "rating": None, "favorite": False,
         "duration": round(duration, 1), "created": time.time()}))
     job["clips"].append(name)
     src.unlink(missing_ok=True)   # o trecho bruto não é mais necessário
@@ -339,37 +341,63 @@ def create_vod(req: VodRequest) -> dict:
     return _submit("gravada", url, {"url": url, "window": window, "auto": req.auto, "opts": opts})
 
 
+MAX_CANDIDATES = 12       # trechos baixados e avaliados, no máximo, por live gravada
+
+
 def _work_vod(job: dict) -> None:
     p, stamp = job["params"], job["id"]
     url = p["url"]
-    # Cada item: (início, fim, opções do clip). No automático as opções levam tipo e nota.
-    windows = [(*p["window"], p["opts"])] if p["window"] else []
-    if p["auto"]:
-        from ..highlights.audio import find_highlights
-        job["step"] = "Baixando áudio da live"
-        def progress(done: int, total: int) -> None:
-            job["step"] = f"Baixando áudio da live ({done * 100 // total}%)"
+    if not p["auto"]:
+        start, end = p["window"]
+        job["step"] = "Baixando o trecho"
+        raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_1.mp4")
+        _render(job, raw, f"clip_{stamp}_1", p["opts"], url)
+        return
 
-        audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a", progress)
-        job["step"] = "Analisando a live inteira"
-        # Pega candidatos de sobra, do mais forte ao mais fraco: os que não mostram o
-        # streamer (abertura, intervalo) são descartados e o próximo entra no lugar.
-        moments = sorted(find_highlights(str(audio), count=p["auto"] * 4), key=lambda m: -m.score)
-        windows = [(m.start, m.end, {**p["opts"], "kind": m.kind, "score": m.score}) for m in moments]
-        audio.unlink(missing_ok=True)
-        if not windows:
-            raise RuntimeError("Não achei nenhum momento marcante nessa live; "
-                               "tente o modo por intervalo.")
-    wanted = p["auto"] or 1
-    for i, (start, end, opts) in enumerate(windows, 1):
-        if len(job["clips"]) >= wanted:
-            break
-        job["step"] = f"Baixando trecho ({len(job['clips']) + 1} de {wanted})"
-        raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
-        _render(job, raw, f"clip_{stamp}_{i}", opts, url)
-    if p["auto"] and not job["clips"]:
+    from ..detect.webcam import detect_webcam
+    from ..highlights import rerank
+    from ..highlights.audio import find_highlights
+    from ..pipeline import _words
+
+    def progress(done: int, total: int) -> None:
+        job["step"] = f"Baixando áudio da live ({done * 100 // total}%)"
+
+    job["step"] = "Baixando áudio da live"
+    audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a", progress)
+    job["step"] = "Analisando a live inteira"
+    # 1ª etapa: onde o som se destacou. Pega candidatos de sobra, do mais forte ao mais fraco.
+    wanted = p["auto"]
+    moments = sorted(find_highlights(str(audio), count=wanted * 4), key=lambda m: -m.score)[:MAX_CANDIDATES]
+    audio.unlink(missing_ok=True)
+    if not moments:
+        raise RuntimeError("Não achei nenhum momento marcante nessa live; tente o modo por intervalo.")
+
+    # 2ª etapa: baixa cada candidato e olha o que ele mostra antes de escolher.
+    candidates = []
+    for i, moment in enumerate(moments, 1):
+        job["step"] = f"Avaliando candidato {i} de {len(moments)}"
+        raw = vod.download_section(url, moment.start, moment.end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
+        cam = detect_webcam(str(raw))
+        if cam is None:           # abertura, intervalo, "já volto": sem streamer não há clip
+            raw.unlink(missing_ok=True)
+            continue
+        words = _words(str(raw))
+        seen = rerank.visual(str(raw), cam)
+        rank = rerank.final_score(moment.score, seen, rerank.speech(words), bool(words))
+        candidates.append({"rank": rank, "raw": raw, "cam": cam, "words": words, "moment": moment, "index": i})
+    candidates.sort(key=lambda c: -c["rank"])
+    for loser in candidates[wanted:]:
+        loser["raw"].unlink(missing_ok=True)
+    if not candidates:
         raise RuntimeError("Os momentos mais barulhentos dessa live não mostram o streamer na câmera; "
                            "tente o modo por intervalo.")
+
+    for n, c in enumerate(candidates[:wanted], 1):
+        job["step"] = f"Montando clip {n} de {min(wanted, len(candidates))}"
+        cam = c["cam"]
+        opts = {**p["opts"], "kind": c["moment"].kind, "score": c["moment"].score, "rank": c["rank"],
+                "cam": p["opts"].get("cam") or f"{cam.x},{cam.y},{cam.w},{cam.h}"}
+        _render(job, c["raw"], f"clip_{stamp}_{c['index']}", opts, url, words=c["words"])
 
 
 def _work_file(job: dict) -> None:

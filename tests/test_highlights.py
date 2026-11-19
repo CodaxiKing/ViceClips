@@ -153,3 +153,53 @@ def test_twitch_chat_client_joins_answers_ping_and_reads_messages():
     assert connected
     totals = [sum(col) for col in zip(*meter._buckets.values())]
     assert totals[0] == 2 and totals[1] == 1         # 2 mensagens, 1 risada
+
+
+# ---------- segunda etapa: olhar o candidato ----------
+
+def _video(tmp_path, name: str, source: str) -> str:
+    import subprocess
+    path = tmp_path / name
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", source, "-t", "4",
+                    "-c:v", "libx264", "-preset", "ultrafast", str(path)], check=True)
+    return str(path)
+
+
+def test_rerank_tells_a_static_screen_from_gameplay(tmp_path):
+    from viceclips.highlights import rerank
+
+    paused = rerank.visual(_video(tmp_path, "pausa.mp4", "color=c=gray:s=640x360:r=30"), None)
+    playing = rerank.visual(_video(tmp_path, "jogo.mp4", "testsrc2=s=640x360:r=30"), None)
+    assert paused["static"] is True and playing["static"] is False
+    assert playing["game_motion"] > paused["game_motion"] + 1
+
+
+def test_rerank_measures_how_lively_the_streamer_is_on_camera(tmp_path):
+    from viceclips.config import Rect
+    from viceclips.highlights import rerank
+
+    cam = Rect(0, 0, 160, 120)
+    # câmera parada sobre jogo em movimento x câmera agitada
+    calm = _video(tmp_path, "calmo.mp4", "testsrc2=s=640x360:r=30,drawbox=0:0:160:120:gray:fill")
+    lively = _video(tmp_path, "agitado.mp4", "testsrc2=s=640x360:r=30")
+    assert rerank.visual(calm, cam)["reaction"] == 0.0
+    assert rerank.visual(lively, cam)["reaction"] > 0.5
+
+
+def test_rerank_speech_counts_reaction_words():
+    from viceclips.ai.transcribe import Word
+    from viceclips.highlights import rerank
+
+    say = lambda text: [Word(i, i + 0.3, w) for i, w in enumerate(text.split())]
+    assert rerank.speech(say("então a gente vai ali pegar o carro")) == 0.0
+    assert rerank.speech(say("meu deus que isso mano não acredito")) == 1.0
+    assert 0 < rerank.speech(say("nossa olha o tamanho disso")) < 1
+
+
+def test_rerank_prefers_a_real_reaction_over_a_louder_static_screen():
+    from viceclips.highlights import rerank
+
+    loud_break = rerank.final_score(30, {"static": True, "reaction": 0.0}, 0.0, False)       # "já volto" com música
+    quiet_reaction = rerank.final_score(8, {"static": False, "reaction": 0.7}, 0.67, True)   # streamer reagindo
+    plain_gameplay = rerank.final_score(8, {"static": False, "reaction": 0.0}, 0.0, False)
+    assert quiet_reaction > plain_gameplay > loud_break

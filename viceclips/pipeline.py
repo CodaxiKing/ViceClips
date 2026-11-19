@@ -44,7 +44,8 @@ def _auto_title(src: str, words: list) -> str | None:
 def build_clip(src: str, out: str | Path, title: str | None = None,
                cam: Rect | None = None, credit: str | None = None,
                log=_log, known_cam: Rect | None = None,
-               require_streamer: bool = False) -> tuple[str, str | None, Rect | None]:
+               require_streamer: bool = False,
+               words: list | None = None) -> tuple[str, str | None, Rect | None]:
     """Gera o clip vertical; devolve (arquivo, título usado, câmera detectada neste clip).
 
     `known_cam` é a posição da câmera já vista nessa mesma live: vale quando a detecção
@@ -62,8 +63,9 @@ def build_clip(src: str, out: str | Path, title: str | None = None,
         _log(f"câmera detectada em {detected}" if detected else
              f"câmera não detectada; usando a posição já conhecida {known_cam}" if known_cam else
              "câmera não encontrada: layout só gameplay.")
-    log("Transcrevendo a fala")
-    words = _words(src)
+    if words is None:           # quem já transcreveu o trecho passa as palavras prontas
+        log("Transcrevendo a fala")
+        words = _words(src)
     if title is None and ai_titles_enabled():
         log("Gerando título")
         title = _auto_title(src, words)

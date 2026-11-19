@@ -52,9 +52,12 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
   os que superam a mediana dos anteriores.
 
 - [x] Análise multi-sinal do áudio com cortes ajustados ao momento
+- [x] Live gravada em duas etapas: o áudio aponta até 12 candidatos e cada um é avaliado pelo
+      que mostra (jogo em movimento, streamer agitado na câmera, fala de reação) antes da escolha
 - [x] Pico de mensagens no chat da Twitch ao vivo
 
-- [ ] Chat de lives gravadas e de YouTube/Kick (a Twitch não expõe mais o replay pelo yt-dlp)
+- [ ] Chat de lives gravadas: a Twitch só o expõe por uma API interna, não oficial; ficou de fora
+- [ ] Chat ao vivo de YouTube e Kick
 - [ ] Palavras-gatilho na transcrição ("no way", "meu deus", risadas)
 - [x] Na live ao vivo: clip automático quando o áudio dispara (interface web)
 - [ ] IA para entender o conteúdo (frames + transcrição) e descartar falsos positivos;
