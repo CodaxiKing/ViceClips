@@ -28,3 +28,24 @@ def test_game_crop_shifts_away_from_overlapping_cam():
     assert corner_cam == centered
 
 
+
+
+def test_camera_border_search_prefers_the_innermost_clear_line():
+    from viceclips.detect.webcam import _find_line
+
+    profile = np.full(400, 10.0, np.float32)
+    profile[100] = 200      # moldura da câmera
+    profile[40] = 220       # outra linha fixa, mais longe do rosto (HUD do jogo)
+    assert _find_line(profile, 0, 150, "hi") == 100      # rosto à direita: fica com a de dentro
+    profile[300], profile[360] = 200, 220
+    assert _find_line(profile, 250, 400, "lo") == 300    # rosto à esquerda: idem
+
+
+def test_camera_border_search_gives_up_without_a_clear_line():
+    from viceclips.detect.webcam import _find_line
+
+    flat = np.full(200, 10.0, np.float32)
+    assert _find_line(flat, 0, 200, "hi") is None        # nada se destaca
+    flat[50] = 25
+    assert _find_line(flat, 0, 200, "hi") is None        # destaque fraco não conta como borda
+    assert _find_line(flat, 190, 191, "hi") is None      # faixa de busca vazia
