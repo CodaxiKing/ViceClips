@@ -3,8 +3,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import hls
+
 YTDLP = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--quiet", "--no-warnings"]
 VIDEO_FORMAT = "bv*[height<=1080]+ba/b[height<=1080]/b"
+# Para HLS: um arquivo só com vídeo e áudio juntos; no áudio, a faixa "só áudio" da Twitch
+# ou, na falta dela, a qualidade mais leve.
+HLS_VIDEO_FORMAT = "b[height<=1080][protocol^=m3u8]/b[protocol^=m3u8]"
+HLS_AUDIO_FORMAT = "audio_only/Audio_Only/ba[protocol^=m3u8]/w[protocol^=m3u8]"
 
 
 def friendly_error(stderr: str) -> str:
@@ -38,20 +44,28 @@ def probe(url: str) -> dict:
     """Olha o link sem baixar: é live ao vivo? quanto dura?"""
     out = _ytdlp(["--skip-download", "--print", "%(is_live)s\t%(duration)s", url], timeout=60)
     is_live, duration = (out.strip().splitlines() or ["NA\tNA"])[0].split("\t")[:2]
-    return {"is_live": is_live == "True",
-            "duration": float(duration) if duration.replace(".", "", 1).isdigit() else None}
+    seconds = float(duration) if duration.replace(".", "", 1).isdigit() else None
+    # A gravação de uma live que ainda está no ar também vem marcada como "ao vivo", mas tem
+    # duração: é um vídeo que dá para baixar. Ao vivo de verdade é só o que não tem duração.
+    return {"is_live": is_live == "True" and seconds is None, "duration": seconds}
 
 
 def download_section(url: str, start: float, end: float, out: Path) -> Path:
     """Baixa só o intervalo [start, end] (segundos) em 1080p ou menos."""
     out.parent.mkdir(parents=True, exist_ok=True)
+    playlist = hls.stream_url(url, HLS_VIDEO_FORMAT)
+    if playlist:      # Twitch e outros sites em HLS: pega direto só os segmentos do trecho
+        return hls.download_section(playlist, start, end, out)
     _ytdlp(["-f", VIDEO_FORMAT, "--download-sections", f"*{start:.1f}-{end:.1f}",
             "--force-keyframes-at-cuts", "--merge-output-format", "mp4", "-o", str(out), url])
     return out
 
 
-def download_audio(url: str, out: Path) -> Path:
+def download_audio(url: str, out: Path, progress=None) -> Path:
     """Baixa só o áudio da live inteira (leve) para a busca de highlights."""
     out.parent.mkdir(parents=True, exist_ok=True)
+    playlist = hls.stream_url(url, HLS_AUDIO_FORMAT)
+    if playlist:
+        return hls.download_all(playlist, out, progress)
     _ytdlp(["-f", "ba/b", "-x", "--audio-format", "m4a", "-o", str(out), url])
     return out

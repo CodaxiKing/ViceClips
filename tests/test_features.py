@@ -22,6 +22,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "PASSWORD", "")
     web._jobs.clear()
     yield
+    from viceclips.highlights import analysis
+    analysis.MIN_SCORE = analysis.DEFAULT_MIN_SCORE
     for session_id in list(web.manager.sessions):
         web.manager.remove(session_id)
 
@@ -129,7 +131,8 @@ def test_rating_is_saved_and_survives_clip_deletion():
     assert {c["name"]: c["rating"] for c in client.get("/api/clips").json()} == {"clip_a": "bom", "clip_b": "ruim"}
 
     client.delete("/api/clips/clip_a")
-    assert client.get("/api/ratings").json() == {"good": 1, "bad": 1}
+    after = client.get("/api/ratings").json()
+    assert (after["good"], after["bad"]) == (1, 1) and after["calibration"]["needed"] == 13
     record = json.loads(web._ratings_file().read_text().splitlines()[0])
     assert record["kind"] == "engraçado" and record["score"] == 12.5 and record["auto"] is True
     assert client.post("/api/clips/clip_a/rating", json={"good": True}).status_code == 404
@@ -275,3 +278,104 @@ def test_only_speech_in_the_streamer_language_becomes_caption(monkeypatch):
     monkeypatch.setattr(t, "CAPTION_LANG", "")                  # filtro desligado: legenda tudo
     monkeypatch.setattr(FakeModel, "transcribe", lambda self, chunk, language=None, **_: ([Segment("x")], None))
     assert len(t.transcribe_words("clip.mp4")) == 2
+
+
+# ---------- favoritos, zip, calibração, saúde, live gravada ----------
+
+def test_favorite_is_not_deleted_and_loses_the_countdown():
+    make_clip("clip_fav", age=web.CLIP_TTL + 500)
+    make_clip("clip_comum", age=web.CLIP_TTL + 500)
+    client.post("/api/clips/clip_fav/favorite", json={"on": True})
+    web.sweep()
+    listed = client.get("/api/clips").json()
+    assert [(c["name"], c["favorite"], c["expires_in"]) for c in listed] == [("clip_fav", True, None)]
+
+    client.post("/api/clips/clip_fav/favorite", json={"on": False})      # prazo recomeça agora
+    web.sweep()
+    assert web.CLIP_TTL - 5 <= client.get("/api/clips").json()[0]["expires_in"] <= web.CLIP_TTL
+
+
+def test_zip_download_of_all_or_only_favorites():
+    import io
+    import zipfile
+
+    make_clip("clip_a", title="Fuga épica!")
+    make_clip("clip_b", age=5)
+    client.post("/api/clips/clip_b/favorite", json={"on": True})
+    names = lambda res: zipfile.ZipFile(io.BytesIO(res.content)).namelist()
+    assert sorted(names(client.get("/api/clips/zip"))) == ["01 Fuga épica.mp4", "02 clip.mp4"]
+    assert names(client.get("/api/clips/zip", params={"favorites": True})) == ["01 clip.mp4"]
+    assert names(client.get("/api/clips/zip", params={"names": "clip_a"})) == ["01 Fuga épica.mp4"]
+    assert client.get("/api/clips/zip", params={"names": "clip_nao_existe"}).status_code == 404
+    assert not list(config.WORK_DIR.glob("zip_*"))                      # o arquivo temporário some
+
+
+def ratings(good_scores, bad_scores):
+    records = [{"name": f"g{i}", "good": True, "score": s, "auto": True} for i, s in enumerate(good_scores)]
+    return records + [{"name": f"b{i}", "good": False, "score": s, "auto": True} for i, s in enumerate(bad_scores)]
+
+
+def test_calibration_waits_for_enough_ratings_and_ignores_manual_clips():
+    from viceclips.highlights import calibration
+
+    few = calibration.suggest(ratings([9, 10], [5.5]))
+    assert few["min_score"] == 5.0 and few["calibrated"] is False and few["needed"] == 12
+    manual = [{"name": f"m{i}", "good": False, "score": None, "auto": False} for i in range(40)]
+    assert calibration.suggest(manual)["rated"] == 0
+
+
+def test_calibration_raises_the_bar_when_low_scores_are_the_bad_ones():
+    from viceclips.highlights import calibration
+
+    result = calibration.suggest(ratings([8, 9, 9.5, 10, 11, 12, 13, 14, 15, 16], [5.2, 5.5, 6, 6.5, 7, 7.5]))
+    assert result["calibrated"] and result["min_score"] == 8.0        # corta todos os ruins, mantém os bons
+    # reprovados espalhados por todas as notas: não há corte que ajude, fica como está
+    mixed = calibration.suggest(ratings([6, 8, 10, 12, 14, 6.5, 9, 11, 13, 15], [6.2, 9.5, 12.5, 14.5, 10.5]))
+    assert mixed["min_score"] <= 6.5
+
+
+def test_calibration_never_drops_most_of_the_approved_clips_and_relaxes_when_all_good():
+    from viceclips.highlights import analysis, calibration
+
+    harsh = calibration.suggest(ratings([6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 20], [11, 12, 13, 14, 15]))
+    kept = sum(s >= harsh["min_score"] for s in [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 20])
+    assert kept >= 7
+    relaxed = calibration.apply(ratings([7 + i for i in range(16)], []))
+    assert relaxed["min_score"] == 4.0 and analysis.MIN_SCORE == 4.0
+    calibration.apply([])
+    assert analysis.MIN_SCORE == analysis.DEFAULT_MIN_SCORE
+
+
+def test_health_reports_resources_and_warns_about_backlog_and_errors():
+    now = time.time()
+    web._jobs.update({
+        "ok": {"id": "ok", "label": "a", "status": "pronto", "created": now - 100, "started": now - 90, "finished": now - 60, "step": "Pronto", "error": None},
+        **{f"w{i}": {"id": f"w{i}", "label": "b", "status": "fila", "created": now, "step": "Na fila", "error": None} for i in range(5)},
+        **{f"e{i}": {"id": f"e{i}", "label": "live x", "status": "erro", "created": now - 10, "step": "Erro", "error": "falhou"} for i in range(3)},
+    })
+    health = client.get("/api/health").json()
+    assert health["disk"]["total"] > health["disk"]["free"] > 0 and health["cpu"]["cores"] >= 1
+    assert health["queue"]["waiting"] == 5 and health["renders"] == {"count": 1, "average": 30, "slowest": 30}
+    assert len(health["errors"]) == 3 and health["errors"][0]["error"] == "falhou"
+    text = " ".join(health["warnings"])
+    assert "esperando na fila" in text and "falharam na última hora" in text
+
+
+def test_recording_of_an_ongoing_stream_counts_as_a_video_not_as_live(monkeypatch):
+    from viceclips.ingest import vod
+
+    monkeypatch.setattr(vod, "_ytdlp", lambda args, timeout=None: "True\t19069.0\n")
+    assert vod.probe("https://twitch.tv/videos/1") == {"is_live": False, "duration": 19069.0}
+    monkeypatch.setattr(vod, "_ytdlp", lambda args, timeout=None: "True\tNA\n")
+    assert vod.probe("https://twitch.tv/canal") == {"is_live": True, "duration": None}
+
+
+def test_hls_playlist_parsing_picks_segment_times_and_header():
+    from viceclips.ingest.hls import parse_playlist
+
+    text = "\n".join(["#EXTM3U", '#EXT-X-MAP:URI="init-0.mp4"', "#EXTINF:10.000,", "0.mp4",
+                      "#EXTINF:10.000,", "1.mp4", "#EXTINF:4.5,", "https://cdn.x/2.mp4", "#EXT-X-ENDLIST"])
+    init, segments = parse_playlist(text, "https://cdn.x/vod/index.m3u8")
+    assert init == "https://cdn.x/vod/init-0.mp4"
+    assert segments == [("https://cdn.x/vod/0.mp4", 0.0, 10.0), ("https://cdn.x/vod/1.mp4", 10.0, 10.0),
+                        ("https://cdn.x/2.mp4", 20.0, 4.5)]

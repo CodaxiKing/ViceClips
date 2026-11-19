@@ -23,7 +23,7 @@ async function api(path, options = {}) {
 }
 
 /* ---------- navegação ---------- */
-const PAGES = ["novo", "aovivo", "fila", "clips"];
+const PAGES = ["novo", "aovivo", "fila", "clips", "publicar", "servidor"];
 
 function showPage() {
   const page = PAGES.includes(location.hash.slice(1)) ? location.hash.slice(1) : "novo";
@@ -238,7 +238,9 @@ function renderClips(clips) {
       tag.classList.toggle("soon", clip.expires_in != null && clip.expires_in < 120);
     }
   }
-  const key = clips.map((c) => `${c.name}:${c.rating}`).join();
+  const key = clips.map((c) => `${c.name}:${c.rating}:${c.favorite}`).join();
+  $("#bulk-actions").hidden = clips.length === 0;
+  $("#zip-favorites").hidden = !clips.some((c) => c.favorite);
   if (key === clipsKey) return;
   clipsKey = key;
   const grid = $("#clips");
@@ -263,6 +265,15 @@ function renderClips(clips) {
       await api(`/api/clips/${clip.name}`, { method: "DELETE" });
       refresh();
     });
+    const star = el("button", { className: `rate star ${clip.favorite ? "active" : ""}`, textContent: clip.favorite ? "★" : "☆",
+      ariaLabel: clip.favorite ? "Tirar dos favoritos" : "Favoritar: não apagar este clip" });
+    star.setAttribute("aria-pressed", Boolean(clip.favorite));
+    star.addEventListener("click", async () => {
+      await api(`/api/clips/${clip.name}/favorite`, { method: "POST", json: { on: !clip.favorite } });
+      refresh();
+    });
+    const publishButton = el("button", { className: "btn ghost small", textContent: "Publicar" });
+    publishButton.addEventListener("click", () => openPublish(clip));
     const rate = (good, label, text) => {
       const active = clip.rating === (good ? "bom" : "ruim");
       const button = el("button", { className: `rate ${active ? "active" : ""}`, textContent: text, ariaLabel: label });
@@ -278,21 +289,167 @@ function renderClips(clips) {
         ...(clip.kind ? [el("span", { className: `kind ${clip.kind === "engraçado" ? "funny" : "impact"}`,
           textContent: clip.kind === "engraçado" ? "😂 Engraçado" : "💥 Impactante" })] : []),
         ...(title ? [el("div", { className: "clip-title", textContent: title })] : []),
-        ...(clip.expires_in != null ? [el("div", { className: "expires", id: `expires-${clip.name}`, textContent: expiryText(clip.expires_in) })] : []),
+        ...(clip.expires_in != null ? [el("div", { className: "expires", id: `expires-${clip.name}`, textContent: expiryText(clip.expires_in) })]
+          : clip.favorite ? [el("div", { className: "expires", textContent: "★ Favorito: não é apagado" })] : []),
         el("div", { className: "rating" },
           el("span", { textContent: "Ficou bom?" }),
-          rate(true, "Clip bom", "👍"), rate(false, "Clip ruim", "👎")),
+          rate(true, "Clip bom", "👍"), rate(false, "Clip ruim", "👎"), star),
         el("div", { className: "actions" },
           el("a", { className: "btn primary small", href: `/media/${clip.name}.mp4?download=1`, textContent: "Baixar" }),
-          remove)));
+          publishButton, remove)));
   }));
 }
 
 function renderRatings(summary) {
   const total = summary.good + summary.bad;
+  const cal = summary.calibration;
+  let text = `Suas avaliações até agora: ${summary.good} 👍 · ${summary.bad} 👎. `;
+  if (cal.calibrated) {
+    text += cal.min_score > cal.default
+      ? `Com base nelas, os clips automáticos ficaram mais exigentes (nota mínima ${cal.min_score}, era ${cal.default}).`
+      : `Como quase tudo foi aprovado, os clips automáticos ficaram menos exigentes (nota mínima ${cal.min_score}, era ${cal.default}).`;
+  } else if (cal.needed > 0) {
+    text += `Faltam ${cal.needed} avaliações de clips automáticos para o sistema começar a se ajustar ao seu gosto.`;
+  } else {
+    text += "As avaliações confirmam a exigência atual dos clips automáticos.";
+  }
   $("#ratings-summary").hidden = total === 0;
-  $("#ratings-summary").textContent =
-    `Suas avaliações até agora: ${summary.good} 👍 · ${summary.bad} 👎. Elas ficam guardadas para ajustar a escolha dos momentos.`;
+  $("#ratings-summary").textContent = text;
+}
+
+/* ---------- publicar ---------- */
+let publishState = { platforms: [], posts: [] };
+let publishClip = null;
+
+function when(seconds) {
+  return new Date(seconds * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function renderPublish(state) {
+  publishState = state;
+  const waiting = state.posts.filter((p) => Object.values(p.targets).some((t) => t.status === "agendado")).length;
+  $("#posts-badge").hidden = waiting === 0;
+  $("#posts-badge").textContent = waiting;
+
+  $("#platforms").replaceChildren(...state.platforms.map((platform) => {
+    const action = el("button", { className: "btn ghost small",
+      textContent: platform.connected ? "Desconectar" : "Conectar" });
+    action.disabled = !platform.configured && !platform.connected;
+    action.addEventListener("click", async () => {
+      if (platform.connected) {
+        if (!confirm(`Desconectar ${platform.label}?`)) return;
+        renderPublish(await api(`/api/publish/${platform.platform}/disconnect`, { method: "POST" }));
+      } else {
+        location.href = (await api(`/api/publish/${platform.platform}/connect`)).url;
+      }
+    });
+    const detail = platform.connected ? `Conectado (${platform.account})`
+      : platform.configured ? "Pronto para conectar"
+        : `Falta configurar no servidor: ${platform.env.join(" e ")}`;
+    return el("div", { className: "channel" },
+      el("span", { className: `pill ${platform.connected ? "" : "off"}`, textContent: platform.connected ? "CONECTADO" : "DESLIGADO" }),
+      el("span", { className: "channel-name" }, platform.label,
+        el("small", { textContent: detail }),
+        ...(platform.connected ? [] : [el("small", { className: "mono", textContent: `Redirect: ${platform.redirect}` })])),
+      action);
+  }));
+
+  if (!state.posts.length) {
+    $("#posts").replaceChildren(el("p", { className: "hint", textContent: "Nenhum post ainda." }));
+    return;
+  }
+  $("#posts").replaceChildren(...state.posts.map((post) => {
+    const targets = Object.entries(post.targets).map(([name, target]) => {
+      const label = state.platforms.find((p) => p.platform === name)?.label || name;
+      return el("small", { className: target.status === "erro" ? "err" : "" },
+        `${label}: ${target.status}${target.detail ? ` · ${target.detail}` : ""}`);
+    });
+    const pending = Object.values(post.targets).some((t) => t.status === "agendado");
+    const cancel = el("button", { className: "btn ghost small", textContent: pending ? "Cancelar" : "Tirar da lista" });
+    cancel.addEventListener("click", async () => {
+      renderPublish(await api(`/api/posts/${post.id}`, { method: "DELETE" }));
+    });
+    return el("div", { className: "channel" },
+      el("span", { className: "channel-name" }, `${post.title || post.caption.slice(0, 40) || "Clip"} · ${when(post.when)}`, ...targets),
+      cancel);
+  }));
+}
+
+function openPublish(clip) {
+  const connected = publishState.platforms.filter((p) => p.connected);
+  if (!connected.length) {
+    location.hash = "publicar";
+    return;
+  }
+  publishClip = clip;
+  $("#post-platforms").replaceChildren(...connected.map((platform) =>
+    el("label", { className: "check" },
+      el("input", { type: "checkbox", name: "platform", value: platform.platform, checked: true }),
+      el("span", { textContent: platform.label }))));
+  $("#form-post [name=caption]").value = clip.title || "";
+  $("#form-post [name=when]").value = "";
+  $("#form-post .form-error").hidden = true;
+  $("#publish-dialog").showModal();
+}
+
+onSubmit($("#form-post"), async (data) => {
+  const chosen = data.get("when");
+  renderPublish(await api("/api/posts", { method: "POST", json: {
+    clip: publishClip.name, platforms: data.getAll("platform"), caption: data.get("caption"),
+    when: chosen ? new Date(chosen).getTime() / 1000 : null,
+  } }));
+  $("#publish-dialog").close();
+  location.hash = "publicar";
+}, "Enviando…");
+$("#post-cancel").addEventListener("click", () => $("#publish-dialog").close());
+
+const publishNote = new URLSearchParams(location.search).get("publicar");
+if (publishNote) {
+  $("#publish-message").textContent = publishNote === "conectado" ? "Conta conectada." : publishNote;
+  $("#publish-message").classList.toggle("ok", publishNote === "conectado");
+  $("#publish-message").hidden = false;
+  history.replaceState(null, "", "/#publicar");
+}
+
+/* ---------- servidor ---------- */
+function bytes(n) {
+  return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.round(n / 1024 ** 2)} MB`;
+}
+
+function span(seconds) {
+  if (seconds == null) return "sem dados";
+  return seconds >= 60 ? `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s` : `${Math.round(seconds)} s`;
+}
+
+function renderHealth(health) {
+  $("#health-dot").hidden = health.warnings.length === 0;
+  $("#health-warnings").replaceChildren(...health.warnings.map((text) =>
+    el("div", { className: "alert", textContent: text })));
+  const used = health.disk.total - health.disk.free;
+  const tile = (label, value, detail, percent) => el("div", { className: "tile" },
+    el("div", { className: "tile-label", textContent: label }),
+    el("div", { className: "tile-value", textContent: value }),
+    ...(percent == null ? [] : [el("div", { className: "meter" },
+      el("div", { style: `width:${Math.min(100, percent)}%`, className: percent > 90 ? "hot" : "" }))]),
+    el("div", { className: "hint", textContent: detail }));
+  $("#health-tiles").replaceChildren(
+    tile("Disco", `${bytes(health.disk.free)} livres`,
+      `Clips: ${bytes(health.disk.clips)} · Trabalho e modelos: ${bytes(health.disk.work)}`, (used / health.disk.total) * 100),
+    tile("Processador", `${health.cpu.percent}%`, `${health.cpu.cores} núcleos · carga ${health.cpu.load}`, health.cpu.percent),
+    tile("Memória", health.memory.total ? `${bytes(health.memory.available)} livres` : "sem dados",
+      health.memory.total ? `de ${bytes(health.memory.total)}` : "",
+      health.memory.total ? (1 - health.memory.available / health.memory.total) * 100 : null),
+    tile("Fila", `${health.queue.waiting} esperando`,
+      health.queue.running ? `Agora: ${health.queue.running}` : "Nada processando agora"),
+    tile("Lives", `${health.lives.active} de ${health.lives.max}`, "acompanhadas ao mesmo tempo"),
+    tile("Tempo por clip", span(health.renders.average),
+      health.renders.count ? `média dos últimos ${health.renders.count} · mais lento: ${span(health.renders.slowest)}` : "nenhum clip concluído ainda"),
+    tile("No ar há", span(health.uptime), "desde o último reinício"));
+  $("#health-errors").replaceChildren(...(health.errors.length
+    ? health.errors.map((error) => el("div", { className: "channel" },
+      el("span", { className: "channel-name" }, `${error.label} · ${when(error.when)}`,
+        el("small", { className: "err", textContent: error.error }))))
+    : [el("p", { className: "hint", textContent: "Nenhum erro registrado." })]));
 }
 
 function closePlayer() {
@@ -305,7 +462,10 @@ $("#player").addEventListener("click", (event) => { if (event.target === $("#pla
 /* ---------- atualização periódica ---------- */
 async function refresh() {
   try {
-    const [jobs, live, clips] = await Promise.all([api("/api/jobs"), api("/api/live"), api("/api/clips")]);
+    const [jobs, live, clips, publishing, health] = await Promise.all([
+      api("/api/jobs"), api("/api/live"), api("/api/clips"), api("/api/publish"), api("/api/health")]);
+    renderPublish(publishing);
+    renderHealth(health);
     renderJobs(jobs);
     renderLive(live);
     renderClips(clips);

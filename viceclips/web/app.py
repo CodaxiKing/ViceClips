@@ -10,27 +10,32 @@ Com VICECLIPS_PASSWORD definida, tudo exige login (cookie de sessão).
 import hmac
 import json
 import os
+import shutil
 import re
 import secrets
 import threading
 import time
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 from .. import config
 from ..ai import transcribe
 from ..config import Rect
+from ..highlights import calibration
 from ..ingest import vod
 from ..media import frame_jpeg, parse_time, probe
-from ..pipeline import ai_titles_enabled, build_clip
-from . import push
+from ..pipeline import NoStreamer, ai_titles_enabled, build_clip
+from . import publish, push
 from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession
 
 STATIC = Path(__file__).parent / "static"
@@ -48,6 +53,7 @@ _jobs: dict[str, dict] = {}
 _state_lock = threading.Lock()
 _login_lock = threading.Lock()
 _halt = threading.Event()
+_started_at = time.time()
 _known_cams: dict[str, Rect] = {}     # origem (link da live) -> onde a câmera foi vista
 
 
@@ -62,8 +68,10 @@ manager = LiveManager(_queue_live_clip)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _resume_jobs()
+    calibration.apply(_rating_records())
     manager.start_background()
     threading.Thread(target=_janitor, daemon=True).start()
+    threading.Thread(target=_publisher, daemon=True).start()
     yield
     _halt.set()
     manager.shutdown()
@@ -103,7 +111,11 @@ def _authed(request: Request) -> bool:
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
-    public = path in ("/", "/sw.js", "/api/login", "/api/session") or path.startswith("/static/")
+    # Além das páginas básicas, ficam abertos: a volta do OAuth (validada pelo `state`) e o
+    # link temporário assinado de onde o Instagram baixa o vídeo.
+    public = (path in ("/", "/sw.js", "/api/login", "/api/session") or path.startswith("/static/")
+              or path.startswith("/public/")
+              or (path.startswith("/api/publish/") and path.endswith("/callback")))
     if not public and not _authed(request):
         return JSONResponse({"detail": "Faça login."}, status_code=401)
     return await call_next(request)
@@ -174,7 +186,7 @@ def _public(job: dict) -> dict:
 
 
 def _run(job: dict) -> None:
-    job["status"] = "processando"
+    job["status"], job["started"] = "processando", time.time()
     _save_jobs()
     try:
         WORKERS[job["kind"]](job)
@@ -182,6 +194,7 @@ def _run(job: dict) -> None:
     except Exception as exc:
         job["status"], job["step"] = "erro", "Erro"
         job["error"] = str(exc)[-600:]
+    job["finished"] = time.time()
     _save_jobs()
 
 
@@ -198,23 +211,31 @@ def _resume_jobs() -> None:
             _executor.submit(_run, job)
 
 
-def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
-    """Renderiza `src` em OUT_DIR/name.mp4, grava capa e metadados e avisa o celular."""
+def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> bool:
+    """Renderiza `src` em OUT_DIR/name.mp4, grava capa e metadados e avisa o celular.
+
+    Devolve False quando um clip automático é descartado por não mostrar o streamer.
+    """
     def step(text: str) -> None:
         job["step"] = text
 
     out = config.OUT_DIR / f"{name}.mp4"
     cam = Rect.parse(opts["cam"]) if opts.get("cam") else None
-    path, title, detected = build_clip(str(src), out, title=opts.get("title"), cam=cam,
-                                       credit=opts.get("credit"), log=step,
-                                       known_cam=_known_cams.get(source))
+    try:
+        path, title, detected = build_clip(str(src), out, title=opts.get("title"), cam=cam,
+                                           credit=opts.get("credit"), log=step,
+                                           known_cam=_known_cams.get(source),
+                                           require_streamer=opts.get("kind") is not None)
+    except NoStreamer:
+        src.unlink(missing_ok=True)
+        return False
     if detected:
         _known_cams[source] = detected     # mesma live, próxima vez: câmera no mesmo lugar
     duration = probe(path)["duration"]
     out.with_suffix(".jpg").write_bytes(frame_jpeg(path, duration / 2, width=360))
     out.with_suffix(".json").write_text(json.dumps({
         "name": name, "title": title, "credit": opts.get("credit"), "source": source,
-        "kind": opts.get("kind"), "score": opts.get("score"), "rating": None,
+        "kind": opts.get("kind"), "score": opts.get("score"), "rating": None, "favorite": False,
         "duration": round(duration, 1), "created": time.time()}))
     job["clips"].append(name)
     src.unlink(missing_ok=True)   # o trecho bruto não é mais necessário
@@ -222,6 +243,7 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
     what = {"engraçado": "Momento engraçado", "impactante": "Momento impactante"}.get(opts.get("kind"), "Clip")
     minutes = f" Fica disponível por {CLIP_TTL // 60} min." if CLIP_TTL else ""
     push.notify("Clip pronto", f"{title or what} · {job['label'][:40]}.{minutes}")
+    return True
 
 
 def _options(title: str | None, credit: str | None, cam: str | None) -> dict:
@@ -244,19 +266,25 @@ def _check_url(url: str) -> str:
 
 # ---------- faxina ----------
 
+def _kept(clip: dict) -> bool:
+    """Clip que não entra na contagem para ser apagado."""
+    return bool(clip.get("favorite")) or clip.get("name") in publish.pending_clips()
+
+
 def sweep(now: float | None = None) -> None:
     """Apaga clips vencidos e sobras antigas de processamento."""
     now = now or time.time()
     if CLIP_TTL:
         for meta in config.OUT_DIR.glob("clip_*.json"):
             try:
-                expired = now - json.loads(meta.read_text())["created"] > CLIP_TTL
+                data = json.loads(meta.read_text())
+                expired = not _kept(data) and now - data["created"] > CLIP_TTL
             except (OSError, ValueError, KeyError):
                 expired = now - meta.stat().st_mtime > CLIP_TTL
             if expired:
                 for suffix in (".mp4", ".jpg", ".json"):
                     meta.with_suffix(suffix).unlink(missing_ok=True)
-    for pattern in ("upload_*", "live_*.mp4", "vod_*"):
+    for pattern in ("upload_*", "live_*.mp4", "vod_*", "zip_*"):
         for leftover in config.WORK_DIR.glob(pattern):
             if leftover.is_file() and now - leftover.stat().st_mtime > STALE_WORK_SECONDS:
                 leftover.unlink(missing_ok=True)
@@ -319,18 +347,29 @@ def _work_vod(job: dict) -> None:
     if p["auto"]:
         from ..highlights.audio import find_highlights
         job["step"] = "Baixando áudio da live"
-        audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a")
+        def progress(done: int, total: int) -> None:
+            job["step"] = f"Baixando áudio da live ({done * 100 // total}%)"
+
+        audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a", progress)
         job["step"] = "Analisando a live inteira"
-        windows = [(m.start, m.end, {**p["opts"], "kind": m.kind, "score": m.score})
-                   for m in find_highlights(str(audio), count=p["auto"])]
+        # Pega candidatos de sobra, do mais forte ao mais fraco: os que não mostram o
+        # streamer (abertura, intervalo) são descartados e o próximo entra no lugar.
+        moments = sorted(find_highlights(str(audio), count=p["auto"] * 4), key=lambda m: -m.score)
+        windows = [(m.start, m.end, {**p["opts"], "kind": m.kind, "score": m.score}) for m in moments]
         audio.unlink(missing_ok=True)
         if not windows:
             raise RuntimeError("Não achei nenhum momento marcante nessa live; "
                                "tente o modo por intervalo.")
+    wanted = p["auto"] or 1
     for i, (start, end, opts) in enumerate(windows, 1):
-        job["step"] = f"Baixando trecho {i}/{len(windows)}"
+        if len(job["clips"]) >= wanted:
+            break
+        job["step"] = f"Baixando trecho ({len(job['clips']) + 1} de {wanted})"
         raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
         _render(job, raw, f"clip_{stamp}_{i}", opts, url)
+    if p["auto"] and not job["clips"]:
+        raise RuntimeError("Os momentos mais barulhentos dessa live não mostram o streamer na câmera; "
+                           "tente o modo por intervalo.")
 
 
 def _work_file(job: dict) -> None:
@@ -458,7 +497,8 @@ def list_clips() -> list[dict]:
     for meta in config.OUT_DIR.glob("clip_*.json"):
         if meta.with_suffix(".mp4").exists():
             clip = json.loads(meta.read_text())
-            clip["expires_in"] = max(0, round(clip["created"] + CLIP_TTL - now)) if CLIP_TTL else None
+            clip["expires_in"] = (max(0, round(clip["created"] + CLIP_TTL - now))
+                                  if CLIP_TTL and not _kept(clip) else None)
             clips.append(clip)
     return sorted(clips, key=lambda c: c["created"], reverse=True)
 
@@ -490,6 +530,106 @@ def delete_clip(name: str) -> dict:
     return {"deleted": name}
 
 
+# ---------- favoritos e download em lote ----------
+
+class Favorite(BaseModel):
+    on: bool
+
+
+@app.post("/api/clips/{name}/favorite")
+def favorite_clip(name: str, req: Favorite) -> dict:
+    """Favorito não é apagado pela faxina dos 10 minutos."""
+    meta_path = _clip_file(name, ".json")
+    meta = json.loads(meta_path.read_text())
+    meta["favorite"] = req.on
+    if not req.on:
+        meta["created"] = time.time()      # ao desfavoritar, o prazo recomeça do zero
+    meta_path.write_text(json.dumps(meta))
+    return {"favorite": req.on}
+
+
+@app.get("/api/clips/zip")
+def clips_zip(names: str = "", favorites: bool = False) -> FileResponse:
+    """Um .zip com os clips pedidos (todos, se nenhum for informado)."""
+    wanted = [n for n in names.split(",") if n]
+    clips = [c for c in list_clips()
+             if (not wanted or c["name"] in wanted) and (not favorites or c.get("favorite"))]
+    if not clips:
+        raise HTTPException(404, "Nenhum clip para baixar.")
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    path = config.WORK_DIR / f"zip_{uuid.uuid4().hex[:10]}.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:    # mp4 já é comprimido
+        for i, clip in enumerate(clips, 1):
+            label = re.sub(r"[^\w\- ]+", "", clip.get("title") or clip.get("kind") or "clip").strip()[:50]
+            archive.write(_clip_file(clip["name"], ".mp4"), f"{i:02d} {label or 'clip'}.mp4")
+    return FileResponse(path, media_type="application/zip", filename="viceclips.zip",
+                        background=BackgroundTask(path.unlink, missing_ok=True))
+
+
+# ---------- saúde do servidor ----------
+
+def _folder_bytes(folder: Path) -> int:
+    return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.exists() else 0
+
+
+def _memory() -> dict:
+    try:
+        info = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+        kb = lambda key: int(info[key].split()[0]) * 1024
+        return {"total": kb("MemTotal"), "available": kb("MemAvailable")}
+    except (OSError, KeyError, ValueError):
+        return {"total": 0, "available": 0}
+
+
+@app.get("/api/health")
+def health() -> dict:
+    now = time.time()
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    disk = shutil.disk_usage(config.WORK_DIR)
+    cores = os.cpu_count() or 1
+    try:
+        load = os.getloadavg()[0]
+    except OSError:
+        load = 0.0
+    memory = _memory()
+    with _lock:
+        jobs = list(_jobs.values())
+    waiting = [j for j in jobs if j["status"] == "fila"]
+    running = next((j for j in jobs if j["status"] == "processando"), None)
+    done = sorted((j for j in jobs if j.get("finished") and j.get("started") and j["status"] == "pronto"),
+                  key=lambda j: j["finished"])[-20:]
+    times = [j["finished"] - j["started"] for j in done]
+    errors = sorted((j for j in jobs if j["status"] == "erro"), key=lambda j: j["created"], reverse=True)[:8]
+    lives = manager.status()["sessions"]
+
+    warnings = []
+    if disk.free < max(2 * 1024 ** 3, disk.total * 0.1):
+        warnings.append("Pouco espaço em disco: os próximos clips podem falhar.")
+    if load > cores * 0.9:
+        warnings.append("Processador no limite: os clips vão demorar mais para ficar prontos.")
+    if memory["total"] and memory["available"] < memory["total"] * 0.1:
+        warnings.append("Pouca memória livre.")
+    if len(waiting) >= 5:
+        warnings.append(f"{len(waiting)} clips esperando na fila: o servidor não está dando conta do ritmo.")
+    if sum(now - j["created"] < 3600 for j in errors) >= 3:
+        warnings.append("Vários clips falharam na última hora; veja os erros abaixo.")
+
+    return {
+        "warnings": warnings,
+        "uptime": round(now - _started_at),
+        "disk": {"total": disk.total, "free": disk.free, "clips": _folder_bytes(config.OUT_DIR),
+                 "work": _folder_bytes(config.WORK_DIR)},
+        "cpu": {"cores": cores, "load": round(load, 2), "percent": min(100, round(load / cores * 100))},
+        "memory": memory,
+        "queue": {"waiting": len(waiting), "running": running["step"] if running else None,
+                  "running_label": running["label"] if running else None},
+        "lives": {"active": sum(s["running"] for s in lives), "max": manager.status()["max"]},
+        "renders": {"count": len(times), "average": round(sum(times) / len(times)) if times else None,
+                    "slowest": round(max(times)) if times else None},
+        "errors": [{"label": j["label"], "error": j["error"], "when": j["created"]} for j in errors],
+    }
+
+
 # ---------- avaliações ----------
 
 class Rating(BaseModel):
@@ -513,17 +653,20 @@ def rate_clip(name: str, req: Rating) -> dict:
     return {"rating": meta["rating"], **ratings_summary()}
 
 
+def _rating_records() -> list[dict]:
+    try:
+        return [json.loads(line) for line in _ratings_file().read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return []
+
+
 @app.get("/api/ratings")
 def ratings_summary() -> dict:
-    latest: dict[str, dict] = {}
-    try:
-        for line in _ratings_file().read_text().splitlines():
-            record = json.loads(line)
-            latest[record["name"]] = record       # vale a última avaliação de cada clip
-    except (OSError, ValueError):
-        pass
+    records = _rating_records()
+    latest = {record["name"]: record for record in records}   # vale a última de cada clip
     good = sum(r["good"] for r in latest.values())
-    return {"good": good, "bad": len(latest) - good}
+    # Cada avaliação nova recalcula a exigência dos clips automáticos.
+    return {"good": good, "bad": len(latest) - good, "calibration": calibration.apply(records)}
 
 
 # ---------- avisos no celular ----------
@@ -558,6 +701,95 @@ def push_subscribe(req: PushSubscription, request: Request) -> dict:
 def push_unsubscribe(req: PushSubscription) -> dict:
     push.unsubscribe(req.endpoint)
     return {"ok": True}
+
+
+# ---------- publicação ----------
+
+def _publisher() -> None:
+    while not _halt.wait(30):
+        try:
+            publish.run_due()
+        except Exception:
+            pass
+
+
+def _site(request: Request) -> str:
+    return f"{request.url.scheme}://{request.url.netloc}"
+
+
+def _platform(name: str) -> str:
+    if name not in publish.PLATFORMS:
+        raise HTTPException(404, "Plataforma desconhecida.")
+    return name
+
+
+class NewPost(BaseModel):
+    clip: str
+    platforms: list[str]
+    caption: str = ""
+    when: float | None = None      # segundos desde 1970; vazio = agora
+
+
+@app.get("/api/publish")
+def publish_status(request: Request) -> dict:
+    site = _site(request)
+    return {"platforms": [{**p, "redirect": f"{site}/api/publish/{p['platform']}/callback"}
+                          for p in publish.status()],
+            "posts": sorted(publish.posts(), key=lambda p: p["when"], reverse=True)[:50]}
+
+
+@app.get("/api/publish/{platform}/connect")
+def publish_connect(platform: str, request: Request) -> dict:
+    try:
+        return {"url": publish.connect_url(_platform(platform), _site(request))}
+    except publish.PublishError as exc:
+        raise HTTPException(409, str(exc))
+
+
+@app.get("/api/publish/{platform}/callback")
+def publish_callback(platform: str, state: str = "", code: str = "", error: str = "") -> RedirectResponse:
+    message = "conectado"
+    try:
+        if error or not code:
+            raise publish.PublishError("A autorização foi cancelada ou recusada.")
+        publish.finish_connect(_platform(platform), state, code)
+    except publish.PublishError as exc:
+        message = str(exc)
+    return RedirectResponse("/?publicar=" + quote(message) + "#publicar")
+
+
+@app.post("/api/publish/{platform}/disconnect")
+def publish_disconnect(platform: str, request: Request) -> dict:
+    publish.disconnect(_platform(platform))
+    return publish_status(request)
+
+
+@app.post("/api/posts")
+def post_create(req: NewPost, request: Request) -> dict:
+    meta = json.loads(_clip_file(req.clip, ".json").read_text())
+    now = time.time()
+    if req.when and not now - 300 <= req.when <= now + 30 * 86400:
+        raise HTTPException(422, "Escolha uma data entre agora e os próximos 30 dias.")
+    try:
+        publish.schedule(req.clip, meta.get("title"), req.platforms, req.caption, req.when)
+    except publish.PublishError as exc:
+        raise HTTPException(409, str(exc))
+    if not req.when or req.when <= now:
+        threading.Thread(target=publish.run_due, daemon=True).start()   # publica já, sem esperar o ciclo
+    return publish_status(request)
+
+
+@app.delete("/api/posts/{post_id}")
+def post_cancel(post_id: str, request: Request) -> dict:
+    publish.cancel(post_id)
+    return publish_status(request)
+
+
+@app.get("/public/{expires}/{token}/{name}.mp4")
+def public_video(expires: int, token: str, name: str) -> FileResponse:
+    if not publish.valid_public(name, expires, token):
+        raise HTTPException(404, "Link expirado.")
+    return FileResponse(_clip_file(name, ".mp4"), media_type="video/mp4")
 
 
 # ---------- páginas ----------

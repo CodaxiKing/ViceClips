@@ -35,6 +35,12 @@
         <span class="badge" id="queue-badge" hidden></span></a>
       <a href="#clips" data-page="clips">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/></svg>Meus clips</a>
+      <a href="#publicar" data-page="publicar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg>Publicar
+        <span class="badge" id="posts-badge" hidden></span></a>
+      <a href="#servidor" data-page="servidor">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Servidor
+        <span class="dot warn" id="health-dot" hidden></span></a>
     </nav>
     <button class="btn ghost small" id="push-btn" hidden>🔔 Ativar avisos</button>
     <p class="sidebar-note" id="push-note" hidden></p>
@@ -148,9 +154,63 @@
       <h1>Meus clips</h1>
       <p class="lead" id="clips-lead">Prontos para baixar e postar.</p>
       <p class="hint" id="ratings-summary" hidden></p>
+      <div class="actions" id="bulk-actions" hidden>
+        <a class="btn ghost small" id="zip-all" href="/api/clips/zip">Baixar todos (.zip)</a>
+        <a class="btn ghost small" id="zip-favorites" href="/api/clips/zip?favorites=true" hidden>Baixar favoritos (.zip)</a>
+      </div>
       <div id="clips" class="grid"></div>
     </section>
+  
+
+    <!-- Publicar -->
+    <section class="page" id="page-publicar" hidden>
+      <h1>Publicar</h1>
+      <p class="lead">Conecte suas contas uma vez e publique ou agende os clips direto daqui. Em cada clip de "Meus clips" há um botão Publicar.</p>
+      <p class="form-error" id="publish-message" role="status" hidden></p>
+      <div class="card">
+        <h2>Contas</h2>
+        <div id="platforms" class="rows"></div>
+        <p class="hint">Cada plataforma exige um app de desenvolvedor seu. O passo a passo está no README do projeto, em "Publicação".</p>
+      </div>
+      <div class="card">
+        <h2>Posts</h2>
+        <div id="posts" class="rows"></div>
+      </div>
+    </section>
+
+    <!-- Servidor -->
+    <section class="page" id="page-servidor" hidden>
+      <h1>Servidor</h1>
+      <p class="lead">Como a máquina está aguentando o trabalho.</p>
+      <div id="health-warnings" class="stack"></div>
+      <div id="health-tiles" class="tiles"></div>
+      <div class="card">
+        <h2>Erros recentes</h2>
+        <div id="health-errors" class="rows"></div>
+      </div>
+    </section>
   </main>
+
+  <dialog id="publish-dialog">
+    <form class="publish-form" id="form-post">
+      <h2>Publicar clip</h2>
+      <fieldset>
+        <legend>Onde</legend>
+        <div id="post-platforms" class="rows"></div>
+      </fieldset>
+      <label>Legenda do post
+        <textarea name="caption" rows="4" maxlength="2000" placeholder="Texto e hashtags"></textarea>
+      </label>
+      <label><span>Quando <span class="opt">vazio = agora</span></span>
+        <input type="datetime-local" name="when">
+      </label>
+      <p class="form-error" role="alert" hidden></p>
+      <div class="actions">
+        <button class="btn primary" type="submit">Publicar</button>
+        <button class="btn ghost" type="button" id="post-cancel">Cancelar</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="player">
     <video controls playsinline></video>

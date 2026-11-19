@@ -43,7 +43,10 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
   reage forte e guarda os últimos 10 minutos de cada uma para você clipar na hora. Em
   "Canais acompanhados" você cadastra canais e ele começa a gravar quando entram ao vivo.
 - **Fila**: andamento de cada clip (um render por vez).
-- **Meus clips**: assistir, baixar, avaliar (👍/👎) e excluir. Cada clip é apagado sozinho
+- **Publicar**: contas conectadas e posts agendados (ver "Publicação").
+- **Servidor**: disco, processador, memória, fila, tempo por clip e erros recentes.
+- **Meus clips**: assistir, baixar (um ou todos em .zip), favoritar (★ não é apagado),
+  avaliar (👍/👎), publicar e excluir. Cada clip é apagado sozinho
   10 minutos depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
 
 Os clips saem com legenda palavra por palavra (a palavra falada fica em rosa), feita por
@@ -74,6 +77,23 @@ VICECLIPS_PASSWORD="sua-senha" viceclips web --host 0.0.0.0
 
 Na internet, coloque o site atrás de HTTPS (Caddy, nginx, Cloudflare Tunnel); sem isso a
 senha trafega em texto puro.
+
+## Publicação
+
+Na tela **Publicar** você conecta as contas uma vez; depois, cada clip tem um botão "Publicar"
+para postar na hora ou agendar. Cada plataforma exige um app de desenvolvedor seu, e as chaves
+entram como variáveis de ambiente no servidor. O endereço de retorno (redirect) de cada uma
+aparece na própria tela Publicar.
+
+| Plataforma | Onde criar o app | Variáveis | Atenção |
+|---|---|---|---|
+| YouTube Shorts | console.cloud.google.com → ative "YouTube Data API v3" → credenciais OAuth "Aplicativo da Web" | `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | Projeto não verificado pelo Google: os vídeos sobem como **privados** até você pedir a auditoria da API. |
+| TikTok | developers.tiktok.com → app com "Content Posting API" e escopo `video.publish` | `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` | App não auditado pelo TikTok: os posts saem **só para você** (privados) até a auditoria. |
+| Instagram Reels | developers.facebook.com → app com "Instagram API with Instagram Login" | `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET` | Precisa de conta **profissional** (Criador ou Empresa). Em modo de desenvolvimento funciona para as contas cadastradas como testadoras do app. |
+
+Um clip com post agendado não é apagado pela faxina dos 10 minutos; depois de publicado, volta
+a valer o prazo normal. Os conectores foram testados contra um servidor que imita as APIs, não
+contra as plataformas reais: a primeira publicação de verdade é o teste final.
 
 ## App no celular
 
@@ -142,15 +162,18 @@ viceclips/
   web/app.py           API (FastAPI), fila de jobs, validade dos clips, avaliações
   web/lives.py         várias lives ao mesmo tempo e canais acompanhados
   web/push.py          avisos no celular (Web Push)
+  web/publish.py       contas, agendamento e envio para YouTube, TikTok e Instagram
   web/static/          página única: menu lateral, formulários, galeria
   pipeline.py          detectar câmera -> título -> render
   config.py            layout 1080x1920, cores, fontes
   media.py             helpers de ffmpeg/ffprobe
-  ingest/vod.py        download de trechos de lives gravadas (yt-dlp)
+  ingest/vod.py        trechos de lives gravadas (HLS direto; yt-dlp nos demais sites)
+  ingest/hls.py        download de segmentos HLS por HTTP
   ingest/live.py       buffer circular da live + corte dos últimos N segundos
   detect/webcam.py     localização da facecam (rosto estável + bordas fixas; modelo YuNet)
   highlights/analysis.py  análise do áudio: nível, agudos e rajadas vs. o normal da live
   highlights/chat.py   chat da Twitch ao vivo como sinal (leitura anônima)
+  highlights/calibration.py  ajuste da exigência pelas avaliações 👍/👎
   highlights/audio.py  melhores momentos de uma live gravada
   highlights/live_watch.py  clip automático na live ao vivo
   ai/transcribe.py     transcrição local da fala, com tempo por palavra (faster-whisper)

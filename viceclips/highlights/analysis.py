@@ -18,7 +18,8 @@ import numpy as np
 RATE = 8000
 FRAMES_PER_SECOND = 20
 BASELINE_SECONDS = 180      # janela do "normal"
-MIN_SCORE = 5.0             # abaixo disso não é momento
+DEFAULT_MIN_SCORE = 5.0
+MIN_SCORE = DEFAULT_MIN_SCORE   # abaixo disso não é momento; as avaliações do usuário ajustam
 MIN_LIFT = 10.0             # dB acima do normal exigidos no pico (~3x mais alto)
 MILD_LIFT = 6.0             # basta isso quando o chat também reagiu
 MIN_GAP = 45                # segundos mínimos entre dois momentos

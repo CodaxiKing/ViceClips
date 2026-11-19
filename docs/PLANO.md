@@ -35,7 +35,8 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
       detecção de câmera; ajustar limiares ou trocar o detector (YuNet / MediaPipe)
 - [ ] Câmera sem moldura ou com chroma key: segmentar a pessoa em vez de procurar bordas
 - [x] Lembrar a posição da câmera de cada live (vale quando o streamer sai da frente)
-- [ ] Validar download de trechos em Twitch, YouTube e Kick
+- [x] Live gravada da Twitch validada com VOD real (download HLS próprio)
+- [ ] Validar live gravada do YouTube e do Kick
 
 ### Fase 3: highlights melhores
 
@@ -77,10 +78,13 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
 - [x] Notificação no celular quando um clip fica pronto (Web Push)
 - [x] Clips apagados sozinhos após 10 minutos (`VICECLIPS_CLIP_TTL_MINUTES`)
 - [x] Avaliação 👍/👎 por clip, guardada para calibrar os limiares
-- [ ] Usar as avaliações para ajustar os limiares automaticamente
+- [x] Avaliações ajustam a exigência dos clips automáticos (a partir de 15 avaliações)
+- [x] Favoritos (não são apagados) e download de vários clips em .zip
+- [x] Painel de saúde do servidor
+- [x] Clips automáticos exigem o streamer na câmera (descarta abertura e intervalo)
 - [ ] App nas lojas (Play Store / App Store), se o PWA não bastar
 - [ ] Editor de ajuste fino: arrastar o retângulo da câmera, editar título, aparar corte
-- [ ] Publicação agendada em Reels, TikTok e Shorts
+- [x] Publicação direta e agendada em Shorts, TikTok e Reels (falta validar nas plataformas reais)
 - [x] Várias lives ao mesmo tempo e canais que começam a gravar sozinhos
 
 ## Decisões

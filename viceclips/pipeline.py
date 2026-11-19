@@ -16,6 +16,10 @@ def ai_titles_enabled() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 
+class NoStreamer(Exception):
+    """O trecho não mostra o streamer na câmera."""
+
+
 def _words(src: str) -> list:
     """Fala do clip com tempo por palavra; vazio se a transcrição não estiver disponível."""
     try:
@@ -39,7 +43,8 @@ def _auto_title(src: str, words: list) -> str | None:
 
 def build_clip(src: str, out: str | Path, title: str | None = None,
                cam: Rect | None = None, credit: str | None = None,
-               log=_log, known_cam: Rect | None = None) -> tuple[str, str | None, Rect | None]:
+               log=_log, known_cam: Rect | None = None,
+               require_streamer: bool = False) -> tuple[str, str | None, Rect | None]:
     """Gera o clip vertical; devolve (arquivo, título usado, câmera detectada neste clip).
 
     `known_cam` é a posição da câmera já vista nessa mesma live: vale quando a detecção
@@ -49,6 +54,10 @@ def build_clip(src: str, out: str | Path, title: str | None = None,
     if cam is None:
         log("Procurando a câmera")
         detected = detect_webcam(src)
+        if require_streamer and detected is None:
+            # Clip automático sem o streamer na tela é abertura, intervalo ou "já volto":
+            # som alto, mas nada para mostrar.
+            raise NoStreamer("streamer fora da câmera")
         cam = detected or known_cam
         _log(f"câmera detectada em {detected}" if detected else
              f"câmera não detectada; usando a posição já conhecida {known_cam}" if known_cam else
