@@ -55,6 +55,10 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
 - [x] Live gravada em duas etapas: o áudio aponta até 12 candidatos e cada um é avaliado pelo
       que mostra (jogo em movimento, streamer agitado na câmera, fala de reação) antes da escolha
 - [x] Pico de mensagens no chat da Twitch ao vivo
+- [x] Ao vivo por quantidade: a exigência se ajusta a cada live para entregar ~2, ~4 ou ~8 clips
+      por hora (calibrado numa live real de 7 h, onde um mínimo fixo de +10 dB dispararia 36/h)
+- [x] Live gravada sem limite de clips: percorre a live inteira no mesmo ritmo por hora
+- [x] Memória da live de 30 min (configurável) e corte de um momento de minutos atrás
 
 - [ ] Chat de lives gravadas: a Twitch só o expõe por uma API interna, não oficial; ficou de fora
 - [ ] Chat ao vivo de YouTube e Kick

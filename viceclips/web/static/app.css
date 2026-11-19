@@ -275,3 +275,5 @@ textarea { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px sol
 .event.error .event-icon, .event.error .event-text { color: var(--err); }
 .live-watch { color: var(--text); }
 @media (max-width: 800px) { .now { margin-top: 0; } .event { grid-template-columns: 18px 64px 1fr; font-size: 13px; } }
+
+select { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; }

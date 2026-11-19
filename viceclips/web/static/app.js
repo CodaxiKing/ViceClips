@@ -74,6 +74,11 @@ for (const tab of $$(".tab")) {
   });
 }
 
+$("#form-vod [name=unlimited]").addEventListener("change", (event) => {
+  $("#form-vod [name=auto]").disabled = event.target.checked;
+  $("#unlimited-hint").hidden = !event.target.checked;
+});
+
 for (const radio of $$("#form-vod [name=mode]")) {
   radio.addEventListener("change", () => {
     const auto = $("#form-vod [name=mode]:checked").value === "auto";
@@ -106,7 +111,10 @@ function onSubmit(form, send, busyText) {
 
 onSubmit($("#form-vod"), async (data) => {
   const body = { url: data.get("url"), title: data.get("title"), credit: data.get("credit"), cam: data.get("cam") };
-  if (data.get("mode") === "auto") body.auto = Number(data.get("auto"));
+  if (data.get("mode") === "auto") {
+    body.auto = Number(data.get("auto"));
+    body.unlimited = data.has("unlimited");
+  }
   else Object.assign(body, { start: data.get("start"), end: data.get("end") });
   const result = await api("/api/clips/vod", { method: "POST", json: body });
   // Link de live que está no ar: o servidor passa a acompanhá-la em vez de baixar.
@@ -141,7 +149,7 @@ function liveCard(session) {
   const card = $("#live-card").content.firstElementChild.cloneNode(true);
   onSubmit($(".live-clip-form", card), async (data) => {
     await api(`/api/live/${session.id}/clip`, {
-      method: "POST", json: { last: Number(data.get("last")), title: data.get("title") },
+      method: "POST", json: { last: Number(data.get("last")), ago: Number(data.get("ago")), title: data.get("title") },
     });
     location.hash = "fila";
   }, "Cortando…");
@@ -154,7 +162,15 @@ function liveCard(session) {
   return card;
 }
 
+for (const radio of $$("#sensitivity input")) {
+  radio.addEventListener("change", async () => {
+    renderLive(await api("/api/live/sensitivity", { method: "POST", json: { value: radio.value } }));
+  });
+}
+
 function renderLive(live) {
+  const chosen = $(`#sensitivity input[value="${live.sensitivity}"]`);
+  if (chosen && !$("#sensitivity input:focus")) chosen.checked = true;
   $("#live-dot").hidden = !live.sessions.some((s) => s.running);
 
   const seen = new Set();
@@ -174,7 +190,7 @@ function renderLive(live) {
     $(".live-buffer", card).textContent = session.failed
       ? "Não consegui gravar essa live. Confira se o link está certo e se ela está no ar."
       : session.buffered
-        ? `${clock(session.buffered)} guardados (máximo ${clock(session.capacity)}).`
+        ? `${session.running ? "Acompanhando" : "Acompanhou"} há ${span(session.uptime)}, sem limite de tempo · últimos ${clock(session.buffered)} guardados para voltar atrás.`
         : "Conectando à live; os primeiros segundos chegam em instantes.";
     const n = session.auto_clips;
     $(".live-auto", card).textContent = session.auto
@@ -188,7 +204,10 @@ function renderLive(live) {
         ? `Vigia: aprendendo o volume normal desta live (${session.analysed} de 60 s).`
         : session.waiting
           ? "Vigia: pegou um momento, esperando a reação terminar para cortar."
-          : `Vigia: ${clock(session.analysed)} analisados · som agora ${sign(session.lift)} em relação ao normal · maior pico recente ${sign(session.peak_lift)} (dispara em +10 dB).`;
+          : `Vigia: ${clock(session.analysed)} analisados · som agora ${sign(session.lift)} em relação ao normal · maior pico recente ${sign(session.peak_lift)} · nesta live, vira clip a partir de ${sign(session.needed)} (ajustado para ~${session.per_hour} por hora).`;
+    }
+    for (const option of $$("select[name=ago] option", card)) {
+      option.disabled = Number(option.value) > 0 && Number(option.value) + 20 > session.buffered;   // ainda não há tanto guardado
     }
     $("button[type=submit]", card).hidden = session.buffered < 1;
     $(".live-stop", card).hidden = !session.running;

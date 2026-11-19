@@ -36,7 +36,8 @@ from ..ingest import vod
 from ..media import frame_jpeg, parse_time, probe
 from ..pipeline import NoStreamer, ai_titles_enabled, build_clip
 from . import activity, publish, push
-from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession
+from ..highlights.rate import SENSITIVITY
+from .lives import MAX_CLIP_SECONDS, LiveError, LiveManager, LiveSession, sensitivity
 
 STATIC = Path(__file__).parent / "static"
 CLIP_NAME = re.compile(r"^clip_[0-9a-z_]+$")
@@ -322,6 +323,7 @@ class VodRequest(BaseModel):
     start: str | None = None
     end: str | None = None
     auto: int | None = None
+    unlimited: bool = False     # live gravada inteira: todos os bons momentos, sem teto
     title: str | None = None
     credit: str | None = None
     cam: str | None = None
@@ -331,7 +333,9 @@ class VodRequest(BaseModel):
 def create_vod(req: VodRequest) -> dict:
     url, opts = _check_url(req.url), _options(req.title, req.credit, req.cam)
     window = None
-    if req.auto:
+    if req.unlimited:
+        req.auto = req.auto or 1
+    elif req.auto:
         if not 1 <= req.auto <= 10:
             raise HTTPException(422, "Quantidade automática deve ficar entre 1 e 10.")
     else:
@@ -358,10 +362,12 @@ def create_vod(req: VodRequest) -> dict:
     if window and info["duration"] and window[0] >= info["duration"]:
         raise HTTPException(422, "O início informado passa do fim do vídeo.")
 
-    return _submit("gravada", url, {"url": url, "window": window, "auto": req.auto, "opts": opts})
+    return _submit("gravada", url, {"url": url, "window": window, "auto": req.auto, "opts": opts,
+                                    "unlimited": req.unlimited, "duration": info["duration"]})
 
 
 MAX_CANDIDATES = 12       # trechos baixados e avaliados, no máximo, por live gravada
+MAX_UNLIMITED_CANDIDATES = 160    # no modo sem limite (uns 20 s de trabalho por candidato)
 
 
 def _work_vod(job: dict) -> None:
@@ -388,7 +394,17 @@ def _work_vod(job: dict) -> None:
     job["step"] = "Analisando a live inteira"
     # 1ª etapa: onde o som se destacou. Pega candidatos de sobra, do mais forte ao mais fraco.
     wanted = p["auto"]
-    moments = sorted(find_highlights(str(audio), count=wanted * 4), key=lambda m: -m.score)[:MAX_CANDIDATES]
+    limit = MAX_CANDIDATES
+    if p.get("unlimited"):
+        # Sem teto: a quantidade acompanha o tamanho da live, no mesmo ritmo por hora
+        # escolhido para os clips automáticos ao vivo.
+        hours = max((p.get("duration") or 3600) / 3600, 0.5)
+        per_hour = SENSITIVITY[sensitivity()]
+        wanted = max(3, round(hours * per_hour))
+        limit = min(MAX_UNLIMITED_CANDIDATES, wanted * 2)
+        activity.log(f"Sem limite: live de {hours:.1f} h, buscando cerca de {wanted} clips (~{per_hour} por hora)",
+                     "info", job["label"])
+    moments = sorted(find_highlights(str(audio), count=max(wanted * 4, limit)), key=lambda m: -m.score)[:limit]
     audio.unlink(missing_ok=True)
     if not moments:
         raise RuntimeError("Não achei nenhum momento marcante nessa live; tente o modo por intervalo.")
@@ -463,6 +479,7 @@ class LiveStart(BaseModel):
 
 class LiveClip(BaseModel):
     last: float = 45
+    ago: float = 0          # o trecho termina há quantos segundos (0 = agora)
     title: str | None = None
     credit: str | None = None
     cam: str | None = None
@@ -516,11 +533,27 @@ def live_clip(session_id: str, req: LiveClip) -> dict:
     found = _live_session(session_id)
     if not 1 <= req.last <= MAX_CLIP_SECONDS:
         raise HTTPException(422, f"Escolha entre 1 e {MAX_CLIP_SECONDS} segundos.")
-    if found.buffered() < 1:
+    buffered = found.buffered()
+    if buffered < 1:
         raise HTTPException(409, "O buffer ainda está vazio; aguarde alguns segundos.")
+    if req.ago < 0 or req.ago + req.last > buffered + 6:
+        raise HTTPException(422, f"Só há {round(buffered // 60)} min guardados dessa live; escolha um momento mais recente.")
     opts = _options(req.title, req.credit or found.credit, req.cam)
     # Corta já, na requisição, para pegar o momento exato do clique.
-    return found.clip(req.last, opts)
+    return found.clip(req.last, opts, req.ago)
+
+
+class Sensitivity(BaseModel):
+    value: str
+
+
+@app.post("/api/live/sensitivity")
+def live_sensitivity(req: Sensitivity) -> dict:
+    try:
+        manager.set_sensitivity(req.value)
+    except LiveError as exc:
+        raise HTTPException(422, str(exc))
+    return manager.status()
 
 
 @app.post("/api/channels")

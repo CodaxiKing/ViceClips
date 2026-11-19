@@ -456,3 +456,54 @@ def test_text_that_reads_as_english_is_dropped_as_a_safety_net():
     assert not looks_foreign(say("cara, olha isso aqui, que absurdo"), "pt")
     assert not looks_foreign(say("vou pegar o headshot agora, mano"), "pt")       # gíria em inglês não derruba
     assert not looks_foreign(say("the end"), "pt")                               # curto demais para julgar
+
+
+def test_sensitivity_setting_is_saved_and_applies_to_running_lives(fake_record):
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+    status = client.get("/api/live").json()
+    assert status["sensitivity"] == "equilibrado" and status["sessions"][0]["per_hour"] == 4
+
+    status = client.post("/api/live/sensitivity", json={"value": "poucos"}).json()
+    assert status["sensitivity"] == "poucos" and status["sessions"][0]["per_hour"] == 2
+    assert client.post("/api/live/sensitivity", json={"value": "tudo"}).status_code == 422
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_b", "auto": True})
+    assert [s["per_hour"] for s in client.get("/api/live").json()["sessions"]] == [2, 2]    # vale para as novas também
+
+
+def test_cut_from_live_memory_can_end_some_time_ago(tmp_path):
+    from viceclips.ingest import live
+    from viceclips.media import probe
+
+    buf = tmp_path / "buf"
+    buf.mkdir()
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=40", "-f", "lavfi",
+                    "-i", "sine=f=440:d=40", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac",
+                    "-f", "segment", "-segment_time", "4", "-segment_list", str(buf / "buffer.m3u8"),
+                    str(buf / "seg_%03d.ts")], check=True)
+    now = live.cut_last(buf, 10, tmp_path / "agora.mp4")
+    earlier = live.cut_last(buf, 10, tmp_path / "antes.mp4", ago=20)
+    assert 9 <= probe(str(now))["duration"] <= 11.5
+    assert 9 <= probe(str(earlier))["duration"] <= 11.5          # mesmo tamanho, outro ponto da live
+
+    def frame_number(path):      # o testsrc2 desenha um contador; compara pelo brilho médio do 1º frame
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                              "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+        return raw
+
+    assert frame_number(now) != frame_number(earlier)
+
+
+def test_recorded_live_can_be_processed_without_a_clip_limit(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(web.vod, "probe", lambda url: {"is_live": False, "duration": 7 * 3600.0})
+    monkeypatch.setattr(web, "_submit", lambda kind, label, params, job_id=None: sent.update(params) or {"id": "x"})
+    ok = client.post("/api/clips/vod", json={"url": "https://twitch.tv/videos/1", "unlimited": True})
+    assert ok.status_code == 200 and sent["unlimited"] is True and sent["duration"] == 7 * 3600.0
+    # sem a opção, o teto de 10 continua valendo
+    assert client.post("/api/clips/vod", json={"url": "https://twitch.tv/videos/1", "auto": 50}).status_code == 422
+
+
+def test_live_status_shows_how_long_it_has_been_followed(fake_record):
+    client.post("/api/live/start", json={"url": "https://www.twitch.tv/canal_a", "auto": True})
+    session = client.get("/api/live").json()["sessions"][0]
+    assert session["running"] and session["uptime"] >= 0 and session["needed"] == 16.0   # aprendendo: valor inicial

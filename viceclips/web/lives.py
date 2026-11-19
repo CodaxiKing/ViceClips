@@ -15,6 +15,7 @@ from pathlib import Path
 from .. import config
 from ..highlights.chat import ChatMeter, TwitchChat, twitch_channel
 from ..highlights.live_watch import LiveWatcher
+from ..highlights.rate import SENSITIVITY
 from ..ingest import live, vod
 from . import activity
 
@@ -24,6 +25,19 @@ KEEP_ENDED_SECONDS = 600   # live manual encerrada some da tela depois disso
 MAX_CLIP_SECONDS = 180
 MAX_RECONNECTS = 30        # quedas do gravador toleradas numa mesma live
 SHORT_RUN = 20             # gravador que morre antes disso, 3 vezes seguidas, não tem conserto
+
+
+def _settings_file() -> Path:
+    return config.WORK_DIR / "settings.json"
+
+
+def sensitivity() -> str:
+    """Quantos clips automáticos por hora: "poucos", "equilibrado" ou "muitos"."""
+    try:
+        value = json.loads(_settings_file().read_text()).get("sensitivity")
+    except (OSError, ValueError):
+        value = None
+    return value if value in SENSITIVITY else "equilibrado"
 
 
 class LiveError(Exception):
@@ -58,6 +72,7 @@ class LiveSession:
                 self.chat.start()
             self.watcher = LiveWatcher(self.dir, self._highlight, chat=meter,
                                        on_event=lambda text, level="info": activity.log(text, level, self.name))
+            self.watcher.rate.per_hour = SENSITIVITY[sensitivity()]
             self.watcher.start()
 
     def _highlight(self, seconds: float, kind: str, score: float) -> None:
@@ -105,10 +120,10 @@ class LiveSession:
         playlist = self.dir / "buffer.m3u8"
         return sum(d for _, d in live._buffer_segments(playlist)) if playlist.exists() else 0.0
 
-    def clip(self, seconds: float, opts: dict) -> dict:
-        """Corta os últimos `seconds` do buffer e manda para a fila de render."""
+    def clip(self, seconds: float, opts: dict, ago: float = 0.0) -> dict:
+        """Corta `seconds` do buffer (terminando `ago` segundos atrás) e manda para a fila."""
         job_id = uuid.uuid4().hex[:10]
-        raw = live.cut_last(self.dir, seconds, config.WORK_DIR / f"live_{job_id}.mp4")
+        raw = live.cut_last(self.dir, seconds, config.WORK_DIR / f"live_{job_id}.mp4", ago)
         return self._on_clip(self, raw, opts, job_id)
 
     def stop(self) -> None:
@@ -138,8 +153,11 @@ class LiveSession:
             "analysed": self.watcher.total if self.watcher else 0,
             "lift": round(self.watcher.lift, 1) if self.watcher else None,
             "peak_lift": round(self.watcher.peak_lift, 1) if self.watcher else None,
+            "needed": round(self.watcher.rate.threshold(self.watcher.total), 1) if self.watcher else None,
+            "per_hour": self.watcher.rate.per_hour if self.watcher else None,
             "waiting": bool(self.watcher and self.watcher.pending),
-            "started": self.started, "buffered": round(buffered),
+            "started": self.started, "uptime": round((self.ended_at or time.time()) - self.started),
+            "buffered": round(buffered),
             "capacity": live.SEGMENT_SECONDS * live.BUFFER_SEGMENTS,
         }
 
@@ -191,10 +209,21 @@ class LiveManager:
             session.stop()
             shutil.rmtree(session.dir, ignore_errors=True)
 
+    def set_sensitivity(self, value: str) -> None:
+        if value not in SENSITIVITY:
+            raise LiveError("Sensibilidade desconhecida.")
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        _settings_file().write_text(json.dumps({"sensitivity": value}))
+        for session in list(self.sessions.values()):       # vale já para as lives em andamento
+            if session.watcher:
+                session.watcher.rate.per_hour = SENSITIVITY[value]
+        activity.log(f"Sensibilidade dos clips automáticos: {value} (cerca de {SENSITIVITY[value]} por hora, por live)", "ok")
+
     def status(self) -> dict:
         with self._lock:
             sessions = sorted(self.sessions.values(), key=lambda s: s.started)
         return {"sessions": [s.status() for s in sessions], "max": MAX_LIVES,
+                "sensitivity": sensitivity(), "sensitivities": SENSITIVITY,
                 "channels": [{**c, "name": display_name(c["url"]),
                               "live": self._channel_live.get(c["url"], False)}
                              for c in self.channels()]}

@@ -203,3 +203,43 @@ def test_rerank_prefers_a_real_reaction_over_a_louder_static_screen():
     quiet_reaction = rerank.final_score(8, {"static": False, "reaction": 0.7}, 0.67, True)   # streamer reagindo
     plain_gameplay = rerank.final_score(8, {"static": False, "reaction": 0.0}, 0.0, False)
     assert quiet_reaction > plain_gameplay > loud_break
+
+
+# ---------- quantidade de clips por hora ----------
+
+def test_rate_controller_keeps_only_the_strongest_moments_per_hour():
+    from viceclips.highlights.rate import RateController
+
+    spread = np.random.default_rng(3)
+    control, accepted = RateController(per_hour=4), []
+    for t in range(0, 4 * 3600, 60):                  # um momento por minuto durante 4 horas
+        strength = float(spread.uniform(6, 30))
+        if control.accepts(t, strength):
+            accepted.append((t, strength))
+        control.observe(t, strength)
+    later = [s for t, s in accepted if t > 3600]      # depois do aprendizado
+    assert 6 <= len(later) <= 20                      # perto de 4 por hora em 3 horas, não 60 por hora
+    assert min(later) > 22                            # e são os fortes, não os primeiros que apareceram
+
+
+def test_rate_controller_adapts_to_a_quiet_and_to_a_loud_stream():
+    from viceclips.highlights.rate import FLOOR, RateController
+
+    quiet, loud = RateController(4), RateController(4)
+    for t in range(0, 3600, 1300):                    # live calma: 3 momentos na hora (menos que os 4 pedidos)
+        quiet.observe(t, 9.0)
+    for t in range(0, 3600, 50):                      # live barulhenta: momento forte o tempo todo
+        loud.observe(t, 20.0 + (t % 7))
+    assert quiet.threshold(3600) == FLOOR             # quase tudo que se destacar entra
+    assert loud.threshold(3600) > 22                  # a régua sobe junto com a live
+
+
+def test_rate_controller_merges_a_burst_of_peaks_and_chat_lowers_the_bar():
+    from viceclips.highlights.rate import INITIAL, RateController
+
+    control = RateController(4)
+    for t in (100, 110, 120, 130):                    # mesma gritaria
+        control.observe(t, 18.0 + t / 100)
+    assert len(control.events) == 1 and control.events[0][1] == 19.3
+    assert not control.accepts(200, INITIAL - 2)
+    assert control.accepts(200, INITIAL - 2, chat_reacted=True)

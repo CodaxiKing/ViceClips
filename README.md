@@ -40,7 +40,7 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
   varre a live inteira e entrega um clip para cada momento em que o streamer mais reage; no modo
   "Por intervalo" você informa início e fim. Também aceita um arquivo de vídeo.
 - **Ao vivo**: acompanhe até 4 lives ao mesmo tempo. O sistema clipa sozinho quando o streamer
-  reage forte e guarda os últimos 10 minutos de cada uma para você clipar na hora. Em
+  reage forte e guarda os últimos 30 minutos de cada uma para você voltar atrás e clipar. Em
   "Canais acompanhados" você cadastra canais e ele começa a gravar quando entram ao vivo.
 - **Fila**: andamento de cada clip (um render por vez).
 - **Publicar**: contas conectadas e posts agendados (ver "Publicação").
@@ -60,7 +60,8 @@ celular quando um clip fica pronto.
 | `VICECLIPS_CAPTIONS` | `1` | `0` desliga as legendas |
 | `VICECLIPS_CAPTION_LANG` | `pt` | idioma do streamer; só fala nesse idioma vira legenda (vazio = legenda tudo) |
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
-| `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo |
+| `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo (cada uma sem limite de tempo) |
+| `VICECLIPS_BUFFER_MINUTES` | `30` | minutos de cada live guardados para voltar atrás (2 a 90) |
 | `VICECLIPS_LOGO_OPACITY` | `0.7` | opacidade da logo do canal nos clips (`0` tira a logo) |
 
 A fila fica gravada em `work/jobs.json`: se o servidor reiniciar, os clips que estavam em
@@ -121,7 +122,8 @@ O repositório traz `Dockerfile` e `docker-compose.yml`.
 5. Configure o domínio; o Coolify emite o HTTPS, que é necessário para instalar o app.
 
 Vídeo consome CPU e disco: um render usa um núcleo inteiro por alguns segundos a minutos, e a
-live ao vivo mantém até ~10 minutos de buffer em disco.
+live ao vivo guarda os últimos 30 minutos em disco (uns 60 MB por minuto em 1080p60; ajuste com
+`VICECLIPS_BUFFER_MINUTES`).
 
 Para testar a imagem localmente:
 

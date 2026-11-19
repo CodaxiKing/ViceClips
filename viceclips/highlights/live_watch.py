@@ -16,11 +16,13 @@ from ..ingest.live import _buffer_segments
 from . import analysis
 from .analysis import FUNNY, IMPACT
 from .chat import ChatMeter
+from .rate import SENSITIVITY, RateController
 
 WARMUP = analysis.WARMUP
 COOLDOWN = 45        # intervalo mínimo entre dois clips automáticos
-BUDGET_WINDOW = 1800  # em meia hora...
-BUDGET_MAX = 8        # ...no máximo este número de clips automáticos
+NEAR_MISS = 3.0       # dB: descarte que chegou a isso da régua aparece na Atividade
+BUDGET_WINDOW = 1800  # trava de segurança: em meia hora...
+BUDGET_MAX = 10       # ...nunca mais que isto, aconteça o que acontecer
 HISTORY = 600        # segundos de medidas mantidos em memória
 CHAT_RATIO = 3.0     # chat N vezes mais rápido que o normal = explosão
 CHAT_MIN_MESSAGES = 8
@@ -44,6 +46,7 @@ class LiveWatcher(threading.Thread):
         self.lift = 0.0                       # dB acima do normal no último segundo analisado
         self.peak_lift = 0.0                  # o maior desde o último clip
         self.recent: list[tuple[int, float]] = []  # (segundo, nota) dos clips recentes
+        self.rate = RateController(SENSITIVITY["equilibrado"])    # quantos clips por hora queremos
         self.clock: list[tuple[int, float]] = []   # (segundo da live, relógio) para alinhar o chat
         self._seen: set[tuple[str, int]] = set()
         self._halt = threading.Event()
@@ -84,7 +87,6 @@ class LiveWatcher(threading.Thread):
             for i in range(max(first, 0), len(self.feats)):
                 if analysis.is_moment(s, i, analysis.MILD_LIFT):
                     self.pending = {"peak": i + self.offset, "score": float(s["score"][i]), "audio": True}
-                    self.on_event(f"Som subiu {s['lift'][i]:.0f} dB acima do normal; esperando a reação terminar")
                     break
             if self.pending is None:
                 self._chat_only_trigger()
@@ -118,13 +120,21 @@ class LiveWatcher(threading.Thread):
                 kind = IMPACT
         moment, audio_only = self.pending["peak"], self.pending["audio"]
         self.pending = None
-        # Som só um pouco acima do normal não basta sozinho: precisa do chat junto.
-        if audio_only and not chat_reacted and s["lift"][peak] < analysis.MIN_LIFT:
-            self.on_event(f"Momento fraco descartado ({s['lift'][peak]:.0f} dB acima do normal; "
-                          f"precisa de {analysis.MIN_LIFT:.0f}, ou do chat reagindo junto)", "warn")
+        # A régua se ajusta a esta live: o momento precisa estar entre os mais fortes da
+        # última hora para caber na quantidade de clips por hora pedida (ver rate.py).
+        needed = self.rate.threshold(moment)
+        strength = float(s["lift"][peak: peak + 6].max()) if audio_only else needed
+        accepted = self.rate.accepts(moment, strength, chat_reacted)
+        self.rate.observe(moment, strength)
+        if not accepted:
+            # Numa live real são dezenas de descartes por hora; só os que chegaram perto vão
+            # para a tela de Atividade, senão ela vira ruído.
+            if strength >= needed - NEAR_MISS:
+                self.on_event(f"Quase: momento de +{strength:.0f} dB ficou de fora (nesta live só entram os de "
+                              f"+{needed:.0f} dB para cima, os {self.rate.per_hour:g} mais fortes por hora)", "warn")
             return
         if not self._within_budget(moment, score):
-            self.on_event("Momento descartado: já saíram clips demais nesta meia hora e este não supera os anteriores", "warn")
+            self.on_event("Momento descartado: limite de segurança de clips por meia hora atingido", "warn")
             return
         self.last_trigger = moment
         self.recent.append((moment, score))
@@ -136,11 +146,7 @@ class LiveWatcher(threading.Thread):
     def _within_budget(self, moment: int, score: float) -> bool:
         """Numa live agitada, fica só com os melhores em vez de clipar tudo."""
         self.recent = [(t, sc) for t, sc in self.recent if moment - t < BUDGET_WINDOW]
-        if len(self.recent) >= BUDGET_MAX:
-            return False
-        if len(self.recent) >= BUDGET_MAX // 2:
-            return score > float(np.median([sc for _, sc in self.recent]))
-        return True
+        return len(self.recent) < BUDGET_MAX
 
     def _chat_only_trigger(self) -> None:
         """Chat explodiu sem pico de áudio: clipa o que veio logo antes."""
