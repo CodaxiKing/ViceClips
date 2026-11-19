@@ -211,3 +211,27 @@ main { padding-bottom: max(64px, env(safe-area-inset-bottom)); }
 .kind { align-self: flex-start; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
 .kind.funny { background: rgba(255, 196, 61, 0.16); color: #ffc43d; }
 .kind.impact { background: var(--pink-soft); color: var(--pink); }
+
+/* ---------- lives e canais ---------- */
+h2 { font-size: 18px; margin: 0; }
+.stack { display: flex; flex-direction: column; gap: 20px; margin-bottom: 20px; }
+.stack:empty { display: none; }
+.live-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-origin { color: var(--muted); font-size: 13px; flex: none; }
+.rows { display: flex; flex-direction: column; gap: 8px; }
+.channel { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.channel-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- validade e avaliação do clip ---------- */
+.expires { color: var(--muted); font-size: 12px; }
+.expires.soon { color: var(--err); font-weight: 700; }
+.rating { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.rate { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; font-size: 16px; cursor: pointer; line-height: 1; }
+.rate:hover { border-color: var(--muted); }
+.rate.active { border-color: var(--pink); background: var(--pink-soft); }
+
+/* ---------- avisos ---------- */
+#push-btn { margin: auto 12px 8px; }
+#push-btn.on { border-color: var(--pink); color: var(--pink); }
+#push-btn:not([hidden]) ~ #logout { margin-top: 0; }
+.sidebar-note { margin: 0 12px 8px; color: var(--muted); font-size: 12px; }

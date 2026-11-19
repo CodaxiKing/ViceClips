@@ -10,12 +10,16 @@ Estratégia:
    pode passar da câmera: é melhor um close do streamer do que uma faixa do jogo
    aparecendo no painel da câmera.
 """
+from pathlib import Path
+
 import cv2
 import numpy as np
 
 from ..config import Rect
 
 MIN_PRESENCE = 0.4      # fração mínima de frames em que o rosto precisa aparecer
+FACE_MODEL = Path(__file__).with_name("face_detection_yunet_2023mar.onnx")   # OpenCV Zoo, licença MIT
+FACE_SCORE = 0.7        # confiança mínima de cada detecção
 LINE_CONTRAST = 3.0     # borda = gradiente N vezes acima do típico da região
 LINE_MIN = 12.0         # e acima deste mínimo absoluto
 INSET = 3               # pixels para dentro da borda, para não pegar a moldura
@@ -29,20 +33,37 @@ def _sample_frames(path: str, samples: int) -> list[np.ndarray]:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(pos))
         ok, frame = cap.read()
         if ok:
-            frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+            frames.append(frame)
     cap.release()
     return frames
 
 
-def _stable_face(frames: list[np.ndarray]) -> tuple[int, int, int, int] | None:
-    cascade = cv2.CascadeClassifier(
-        cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-    h, w = frames[0].shape
+def _face_boxes(frames: list[np.ndarray]) -> list[tuple[int, int, int, int, int]]:
+    """Rostos em cada frame, como (índice do frame, x, y, lado, lado)."""
+    h, w = frames[0].shape[:2]
     min_side = max(24, h // 20)
-    boxes = []  # (índice do frame, x, y, w, h)
-    for i, gray in enumerate(frames):
-        for box in cascade.detectMultiScale(gray, 1.1, 5, minSize=(min_side, min_side)):
-            boxes.append((i, *map(int, box)))
+    boxes = []
+    try:
+        # YuNet: bem mais preciso que o Haar, que "via" rosto em cadeira vazia e cenário.
+        detector = cv2.FaceDetectorYN.create(str(FACE_MODEL), "", (w, h), FACE_SCORE)
+        for i, frame in enumerate(frames):
+            _, found = detector.detect(frame)
+            for x, y, bw, bh, *_ in (found if found is not None else []):
+                side = int(max(bw, bh) * 1.1)      # caixa quadrada, um pouco folgada
+                if side >= min_side:
+                    boxes.append((i, int(x + bw / 2 - side / 2), int(y + bh / 2 - side / 2), side, side))
+    except cv2.error:
+        cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        for i, frame in enumerate(frames):
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            for box in cascade.detectMultiScale(gray, 1.1, 5, minSize=(min_side, min_side)):
+                boxes.append((i, *map(int, box)))
+    return boxes
+
+
+def _stable_face(frames: list[np.ndarray]) -> tuple[int, int, int, int] | None:
+    boxes = _face_boxes(frames)
     if not boxes:
         return None
 
@@ -94,10 +115,10 @@ def _borders(gx, gy, face, rows: slice, cols: slice) -> dict:
     # estar quase encostado na base (streamer bem enquadrado de perto).
     reach_x, reach_y = int(2.2 * fw), int(2.2 * fh)
     return {
-        "left": _find_line(col_profile, fx - reach_x, fx - fw // 5, "hi"),
-        "right": _find_line(col_profile, fx + fw + fw // 5, fx + fw + reach_x, "lo"),
-        "top": _find_line(row_profile, fy - int(1.5 * fh), fy - fh // 6, "hi"),
-        "bottom": _find_line(row_profile, fy + fh + fh // 8, fy + fh + reach_y, "lo"),
+        "left": _find_line(col_profile, fx - reach_x, fx - fw // 12, "hi"),
+        "right": _find_line(col_profile, fx + fw + fw // 12, fx + fw + reach_x, "lo"),
+        "top": _find_line(row_profile, fy - int(1.5 * fh), fy - fh // 12, "hi"),
+        "bottom": _find_line(row_profile, fy + fh + fh // 12, fy + fh + reach_y, "lo"),
     }
 
 
@@ -110,12 +131,12 @@ def detect_webcam(path: str, samples: int = 16) -> Rect | None:
     if face is None:
         return None
     fx, fy, fw, fh = face
-    H, W = frames[0].shape
-    gx, gy = _static_gradients(frames)
+    H, W = frames[0].shape[:2]
+    gx, gy = _static_gradients([cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames])
 
     # Corte rente ao rosto: com certeza está dentro da câmera.
-    tight = {"left": fx - int(0.5 * fw), "right": fx + fw + int(0.5 * fw),
-             "top": fy - int(0.45 * fh), "bottom": fy + fh + int(0.7 * fh)}
+    tight = {"left": fx - int(0.2 * fw), "right": fx + fw + int(0.2 * fw),
+             "top": fy - int(0.1 * fh), "bottom": fy + fh + int(0.3 * fh)}
 
     # 1ª passada: bordas visíveis na altura/largura do rosto.
     rows = slice(max(fy - fh // 4, 0), min(fy + fh + fh // 4, H))

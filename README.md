@@ -39,10 +39,23 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
 - **Novo clip**: cole o link de uma live gravada. No modo "Melhores momentos" (padrão) o sistema
   varre a live inteira e entrega um clip para cada momento em que o streamer mais reage; no modo
   "Por intervalo" você informa início e fim. Também aceita um arquivo de vídeo.
-- **Ao vivo**: cole o link da live. O sistema clipa sozinho quando o áudio dispara (grito, risada,
-  susto) e guarda os últimos 10 minutos para você clipar na hora com um botão.
+- **Ao vivo**: acompanhe até 4 lives ao mesmo tempo. O sistema clipa sozinho quando o streamer
+  reage forte e guarda os últimos 10 minutos de cada uma para você clipar na hora. Em
+  "Canais acompanhados" você cadastra canais e ele começa a gravar quando entram ao vivo.
 - **Fila**: andamento de cada clip (um render por vez).
-- **Meus clips**: assistir, baixar e excluir os clips prontos.
+- **Meus clips**: assistir, baixar, avaliar (👍/👎) e excluir. Cada clip é apagado sozinho
+  10 minutos depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
+
+Os clips saem com legenda palavra por palavra (a palavra falada fica em rosa), feita por
+transcrição local, sem API. O botão "Ativar avisos" no menu manda uma notificação para o
+celular quando um clip fica pronto.
+
+| Variável | Padrão | Para quê |
+|---|---|---|
+| `VICECLIPS_CLIP_TTL_MINUTES` | `10` | minutos até apagar um clip pronto (`0` = nunca) |
+| `VICECLIPS_CAPTIONS` | `1` | `0` desliga as legendas |
+| `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
+| `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo |
 
 A fila fica gravada em `work/jobs.json`: se o servidor reiniciar, os clips que estavam em
 andamento são retomados sozinhos.
@@ -123,21 +136,24 @@ Os clips saem em `out/`; arquivos intermediários ficam em `work/`.
 ```
 viceclips/
   cli.py               comandos: web, render, vod, live, live-clip
-  web/app.py           API (FastAPI) e fila de jobs
+  web/app.py           API (FastAPI), fila de jobs, validade dos clips, avaliações
+  web/lives.py         várias lives ao mesmo tempo e canais acompanhados
+  web/push.py          avisos no celular (Web Push)
   web/static/          página única: menu lateral, formulários, galeria
   pipeline.py          detectar câmera -> título -> render
   config.py            layout 1080x1920, cores, fontes
   media.py             helpers de ffmpeg/ffprobe
   ingest/vod.py        download de trechos de lives gravadas (yt-dlp)
   ingest/live.py       buffer circular da live + corte dos últimos N segundos
-  detect/webcam.py     localização da facecam (rosto estável + bordas fixas)
+  detect/webcam.py     localização da facecam (rosto estável + bordas fixas; modelo YuNet)
   highlights/analysis.py  análise do áudio: nível, agudos e rajadas vs. o normal da live
   highlights/chat.py   chat da Twitch ao vivo como sinal (leitura anônima)
   highlights/audio.py  melhores momentos de uma live gravada
   highlights/live_watch.py  clip automático na live ao vivo
-  ai/transcribe.py     transcrição da fala (faster-whisper)
+  ai/transcribe.py     transcrição local da fala, com tempo por palavra (faster-whisper)
   ai/title.py          título curto a partir de frames + transcrição (Claude)
   render/title_card.py overlay PNG: título, faixa rosa, crédito
+  render/captions.py   legendas palavra por palavra (ASS)
   render/compose.py    montagem final com ffmpeg
 tests/
 docs/PLANO.md          plano de fases

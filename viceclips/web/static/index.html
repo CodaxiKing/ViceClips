@@ -36,6 +36,8 @@
       <a href="#clips" data-page="clips">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10.5 9.5v5l4-2.5z"/></svg>Meus clips</a>
     </nav>
+    <button class="btn ghost small" id="push-btn" hidden>🔔 Ativar avisos</button>
+    <p class="sidebar-note" id="push-note" hidden></p>
     <button class="btn ghost small" id="logout" hidden>Sair</button>
     <p class="sidebar-foot">Câmera em cima, gameplay embaixo, título no meio.</p>
   </aside>
@@ -97,9 +99,12 @@
     <!-- Ao vivo -->
     <section class="page" id="page-aovivo" hidden>
       <h1>Ao vivo</h1>
-      <p class="lead">O ViceClips acompanha a live, clipa sozinho quando o streamer reage forte e guarda os últimos 10 minutos para você clipar na hora.</p>
+      <p class="lead">Acompanhe várias lives ao mesmo tempo. O ViceClips clipa sozinho quando o streamer reage forte e guarda os últimos 10 minutos de cada uma para você clipar na hora.</p>
+
+      <div id="lives" class="stack"></div>
 
       <form class="card" id="form-live-start">
+        <h2>Acompanhar uma live agora</h2>
         <label>Link da live
           <input type="url" name="url" placeholder="https://www.twitch.tv/canal" required>
         </label>
@@ -112,29 +117,21 @@
         <button class="btn primary" type="submit">Começar a acompanhar</button>
       </form>
 
-      <div class="card" id="live-panel" hidden>
-        <div class="live-head">
-          <span class="pill" id="live-pill">AO VIVO</span>
-          <span class="live-url" id="live-url"></span>
-        </div>
-        <div class="meter" aria-hidden="true"><div id="live-meter"></div></div>
-        <p class="hint" id="live-buffer"></p>
-        <p class="hint" id="live-auto"></p>
-
-        <form id="form-live-clip">
-          <fieldset class="segmented">
-            <legend>Clipar os últimos</legend>
-            <label><input type="radio" name="last" value="20"><span>20 s</span></label>
-            <label><input type="radio" name="last" value="45" checked><span>45 s</span></label>
-            <label><input type="radio" name="last" value="60"><span>60 s</span></label>
-            <label><input type="radio" name="last" value="90"><span>90 s</span></label>
-          </fieldset>
-          <div class="shared-fields"></div>
-          <p class="form-error" role="alert" hidden></p>
-          <div class="actions">
-            <button class="btn primary" type="submit">Clipar agora</button>
-            <button class="btn ghost" type="button" id="live-stop">Parar de acompanhar</button>
+      <div class="card">
+        <h2>Canais acompanhados</h2>
+        <p class="hint">Cadastre os canais uma vez. Quando um deles entrar ao vivo, o ViceClips começa a gravar e clipar sozinho, sem você colar link.</p>
+        <div id="channels" class="rows"></div>
+        <form id="form-channel">
+          <div class="row">
+            <label>Link do canal
+              <input type="url" name="url" placeholder="https://www.twitch.tv/canal" required>
+            </label>
+            <label><span>Crédito <span class="opt">opcional</span></span>
+              <input name="credit" maxlength="30" placeholder="@canal">
+            </label>
           </div>
+          <p class="form-error" role="alert" hidden></p>
+          <button class="btn ghost" type="submit">Cadastrar canal</button>
         </form>
       </div>
     </section>
@@ -149,7 +146,8 @@
     <!-- Meus clips -->
     <section class="page" id="page-clips" hidden>
       <h1>Meus clips</h1>
-      <p class="lead">Prontos para baixar e postar.</p>
+      <p class="lead" id="clips-lead">Prontos para baixar e postar.</p>
+      <p class="hint" id="ratings-summary" hidden></p>
       <div id="clips" class="grid"></div>
     </section>
   </main>
@@ -158,6 +156,37 @@
     <video controls playsinline></video>
     <button class="btn ghost" id="player-close">Fechar</button>
   </dialog>
+
+  <template id="live-card">
+    <div class="card live-card">
+      <div class="live-head">
+        <span class="pill">AO VIVO</span>
+        <span class="live-name"></span>
+        <span class="live-origin" hidden>canal acompanhado</span>
+      </div>
+      <div class="meter" aria-hidden="true"><div></div></div>
+      <p class="hint live-buffer"></p>
+      <p class="hint live-auto"></p>
+      <form class="live-clip-form">
+        <fieldset class="segmented">
+          <legend>Clipar os últimos</legend>
+          <label><input type="radio" name="last" value="20"><span>20 s</span></label>
+          <label><input type="radio" name="last" value="45" checked><span>45 s</span></label>
+          <label><input type="radio" name="last" value="60"><span>60 s</span></label>
+          <label><input type="radio" name="last" value="90"><span>90 s</span></label>
+        </fieldset>
+        <label><span>Título <span class="opt">opcional</span></span>
+          <input name="title" maxlength="60" placeholder="GTA 6 Alien Abduction">
+        </label>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="actions">
+          <button class="btn primary" type="submit">Clipar agora</button>
+          <button class="btn ghost live-stop" type="button">Parar de acompanhar</button>
+          <button class="btn ghost live-remove" type="button" hidden>Tirar da lista</button>
+        </div>
+      </form>
+    </div>
+  </template>
 
   <template id="shared-fields">
     <label><span>Título <span class="opt">opcional</span></span>

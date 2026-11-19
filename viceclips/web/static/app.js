@@ -106,19 +106,13 @@ onSubmit($("#form-upload"), async (data) => {
 
 onSubmit($("#form-live-start"), async (data) => {
   renderLive(await api("/api/live/start", { method: "POST", json: { url: data.get("url"), auto: data.has("auto"), credit: data.get("credit") } }));
+  $("#form-live-start").reset();
 }, "Conectando…");
 
-onSubmit($("#form-live-clip"), async (data) => {
-  await api("/api/live/clip", {
-    method: "POST",
-    json: { last: Number(data.get("last")), title: data.get("title"), credit: data.get("credit"), cam: data.get("cam") },
-  });
-  location.hash = "fila";
-}, "Cortando…");
-
-$("#live-stop").addEventListener("click", async () => {
-  renderLive(await api("/api/live/stop", { method: "POST" }));
-});
+onSubmit($("#form-channel"), async (data) => {
+  renderLive(await api("/api/channels", { method: "POST", json: { url: data.get("url"), credit: data.get("credit") } }));
+  $("#form-channel").reset();
+}, "Cadastrando…");
 
 /* ---------- renderização ---------- */
 function clock(seconds) {
@@ -126,29 +120,78 @@ function clock(seconds) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+const liveCards = new Map();   // id da live -> card (criado uma vez, para não apagar o que foi digitado)
+
+function liveCard(session) {
+  const card = $("#live-card").content.firstElementChild.cloneNode(true);
+  onSubmit($(".live-clip-form", card), async (data) => {
+    await api(`/api/live/${session.id}/clip`, {
+      method: "POST", json: { last: Number(data.get("last")), title: data.get("title") },
+    });
+    location.hash = "fila";
+  }, "Cortando…");
+  $(".live-stop", card).addEventListener("click", async () => {
+    renderLive(await api(`/api/live/${session.id}/stop`, { method: "POST" }));
+  });
+  $(".live-remove", card).addEventListener("click", async () => {
+    renderLive(await api(`/api/live/${session.id}`, { method: "DELETE" }));
+  });
+  return card;
+}
+
 function renderLive(live) {
-  const hasBuffer = live.url && (live.running || live.buffered > 0);
-  $("#form-live-start").hidden = live.running;
-  $("#live-panel").hidden = !hasBuffer;
-  $("#live-dot").hidden = !live.running;
-  if (live.failed) {
-    const error = $("#form-live-start .form-error");
-    error.textContent = "Não consegui gravar essa live. Confira se o link está certo e se ela está no ar.";
-    error.hidden = false;
+  $("#live-dot").hidden = !live.sessions.some((s) => s.running);
+
+  const seen = new Set();
+  for (const session of live.sessions) {
+    seen.add(session.id);
+    if (!liveCards.has(session.id)) {
+      liveCards.set(session.id, liveCard(session));
+      $("#lives").append(liveCards.get(session.id));
+    }
+    const card = liveCards.get(session.id);
+    const pill = $(".pill", card);
+    pill.textContent = session.running ? "AO VIVO" : session.failed ? "FALHOU" : "ENCERRADA";
+    pill.classList.toggle("off", !session.running);
+    $(".live-name", card).textContent = session.name;
+    $(".live-origin", card).hidden = session.origin !== "canal";
+    $(".meter div", card).style.width = `${Math.min(100, (session.buffered / session.capacity) * 100)}%`;
+    $(".live-buffer", card).textContent = session.failed
+      ? "Não consegui gravar essa live. Confira se o link está certo e se ela está no ar."
+      : session.buffered
+        ? `${clock(session.buffered)} guardados (máximo ${clock(session.capacity)}).`
+        : "Conectando à live; os primeiros segundos chegam em instantes.";
+    const n = session.auto_clips;
+    $(".live-auto", card).textContent = session.auto
+      ? `Clip automático ligado${session.chat ? " (áudio + chat da Twitch)" : " (áudio)"} · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
+      : "Clip automático desligado.";
+    $("button[type=submit]", card).hidden = session.buffered < 1;
+    $(".live-stop", card).hidden = !session.running;
+    $(".live-remove", card).hidden = session.running;
   }
-  if (!hasBuffer) return;
-  $("#live-pill").textContent = live.running ? "AO VIVO" : "PARADA";
-  $("#live-pill").classList.toggle("off", !live.running);
-  $("#live-url").textContent = live.url;
-  $("#live-meter").style.width = `${Math.min(100, (live.buffered / live.capacity) * 100)}%`;
-  $("#live-buffer").textContent = live.buffered
-    ? `${clock(live.buffered)} guardados (máximo ${clock(live.capacity)}).`
-    : "Conectando à live; os primeiros segundos chegam em instantes.";
-  const n = live.auto_clips;
-  $("#live-auto").textContent = live.auto
-    ? `Clip automático ligado${live.chat ? " (áudio + chat da Twitch)" : " (áudio)"} · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
-    : "Clip automático desligado.";
-  $("#live-stop").hidden = !live.running;
+  for (const [id, card] of liveCards) {
+    if (!seen.has(id)) {
+      card.remove();
+      liveCards.delete(id);
+    }
+  }
+
+  const rows = $("#channels");
+  if (!live.channels.length) {
+    rows.replaceChildren(el("p", { className: "hint", textContent: "Nenhum canal cadastrado ainda." }));
+    return;
+  }
+  rows.replaceChildren(...live.channels.map((channel) => {
+    const remove = el("button", { className: "btn ghost small", textContent: "Remover" });
+    remove.addEventListener("click", async () => {
+      if (!confirm(`Parar de acompanhar o canal ${channel.name}?`)) return;
+      renderLive(await api("/api/channels/remove", { method: "POST", json: { url: channel.url } }));
+    });
+    return el("div", { className: "channel" },
+      el("span", { className: `pill ${channel.live ? "" : "off"}`, textContent: channel.live ? "AO VIVO" : "OFFLINE" }),
+      el("span", { className: "channel-name", textContent: channel.name, title: channel.url }),
+      remove);
+  }));
 }
 
 function renderJobs(jobs) {
@@ -180,14 +223,28 @@ function renderJobs(jobs) {
 }
 
 let clipsKey = "";
+function expiryText(seconds) {
+  if (seconds == null) return "";
+  if (seconds < 60) return "Apaga em menos de 1 min";
+  return `Apaga em ${Math.ceil(seconds / 60)} min`;
+}
+
 function renderClips(clips) {
-  const key = clips.map((c) => c.name).join();
+  // A contagem regressiva muda a cada ciclo; o resto só é refeito se a lista mudou.
+  for (const clip of clips) {
+    const tag = document.getElementById(`expires-${clip.name}`);
+    if (tag) {
+      tag.textContent = expiryText(clip.expires_in);
+      tag.classList.toggle("soon", clip.expires_in != null && clip.expires_in < 120);
+    }
+  }
+  const key = clips.map((c) => `${c.name}:${c.rating}`).join();
   if (key === clipsKey) return;
   clipsKey = key;
   const grid = $("#clips");
   if (!clips.length) {
-    grid.replaceChildren(el("div", { className: "empty" }, "Nenhum clip ainda. ",
-      el("a", { href: "#novo", textContent: "Criar o primeiro" })));
+    grid.replaceChildren(el("div", { className: "empty" }, "Nenhum clip por aqui. ",
+      el("a", { href: "#novo", textContent: "Criar um clip" })));
     return;
   }
   grid.replaceChildren(...clips.map((clip) => {
@@ -206,15 +263,36 @@ function renderClips(clips) {
       await api(`/api/clips/${clip.name}`, { method: "DELETE" });
       refresh();
     });
+    const rate = (good, label, text) => {
+      const active = clip.rating === (good ? "bom" : "ruim");
+      const button = el("button", { className: `rate ${active ? "active" : ""}`, textContent: text, ariaLabel: label });
+      button.setAttribute("aria-pressed", active);
+      button.addEventListener("click", async () => {
+        renderRatings(await api(`/api/clips/${clip.name}/rating`, { method: "POST", json: { good } }));
+        refresh();
+      });
+      return button;
+    };
     return el("article", { className: "clip" }, thumb,
       el("div", { className: "clip-body" },
         ...(clip.kind ? [el("span", { className: `kind ${clip.kind === "engraçado" ? "funny" : "impact"}`,
           textContent: clip.kind === "engraçado" ? "😂 Engraçado" : "💥 Impactante" })] : []),
         ...(title ? [el("div", { className: "clip-title", textContent: title })] : []),
+        ...(clip.expires_in != null ? [el("div", { className: "expires", id: `expires-${clip.name}`, textContent: expiryText(clip.expires_in) })] : []),
+        el("div", { className: "rating" },
+          el("span", { textContent: "Ficou bom?" }),
+          rate(true, "Clip bom", "👍"), rate(false, "Clip ruim", "👎")),
         el("div", { className: "actions" },
           el("a", { className: "btn primary small", href: `/media/${clip.name}.mp4?download=1`, textContent: "Baixar" }),
           remove)));
   }));
+}
+
+function renderRatings(summary) {
+  const total = summary.good + summary.bad;
+  $("#ratings-summary").hidden = total === 0;
+  $("#ratings-summary").textContent =
+    `Suas avaliações até agora: ${summary.good} 👍 · ${summary.bad} 👎. Elas ficam guardadas para ajustar a escolha dos momentos.`;
 }
 
 function closePlayer() {
@@ -239,7 +317,12 @@ async function refresh() {
 api("/api/session").then((session) => {
   $("#logout").hidden = !session.auth_required;
   for (const node of $$(".ai-title")) node.hidden = !session.ai_titles;
+  if (session.clip_ttl_minutes) {
+    $("#clips-lead").textContent =
+      `Baixe logo: cada clip é apagado ${session.clip_ttl_minutes} ${session.clip_ttl_minutes === 1 ? "minuto" : "minutos"} depois de ficar pronto.`;
+  }
 });
+api("/api/ratings").then(renderRatings).catch(() => {});
 $("#logout").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" });
   location.reload();
@@ -247,6 +330,54 @@ $("#logout").addEventListener("click", async () => {
 
 /* ---------- app instalado ---------- */
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+
+/* ---------- avisos no celular ---------- */
+function keyBytes(base64url) {
+  const text = atob(base64url.replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(text, (ch) => ch.charCodeAt(0));
+}
+
+async function setupPush() {
+  const button = $("#push-btn");
+  const note = $("#push-note");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    note.textContent = "Para receber avisos no iPhone, instale o app na Tela de Início.";
+    note.hidden = !/iPhone|iPad/.test(navigator.userAgent);
+    return;
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const label = async () => {
+    const on = await registration.pushManager.getSubscription();
+    button.textContent = on ? "🔔 Avisos ativados" : "🔔 Ativar avisos";
+    button.classList.toggle("on", Boolean(on));
+  };
+  button.hidden = false;
+  await label();
+  button.addEventListener("click", async () => {
+    note.hidden = true;
+    try {
+      const current = await registration.pushManager.getSubscription();
+      if (current) {
+        await api("/api/push/unsubscribe", { method: "POST", json: { endpoint: current.endpoint } });
+        await current.unsubscribe();
+      } else {
+        if ((await Notification.requestPermission()) !== "granted") {
+          throw new Error("Os avisos estão bloqueados nas permissões do navegador.");
+        }
+        const { key } = await api("/api/push/key");
+        const created = await registration.pushManager.subscribe({
+          userVisibleOnly: true, applicationServerKey: keyBytes(key),
+        });
+        await api("/api/push/subscribe", { method: "POST", json: created.toJSON() });
+      }
+    } catch (exc) {
+      note.textContent = exc.message || "Não deu para ativar os avisos neste navegador.";
+      note.hidden = false;
+    }
+    await label();
+  });
+}
+setupPush().catch(() => {});
 
 // "Compartilhar" de outro app (Twitch, YouTube...) abre aqui com o link já preenchido.
 const shared = new URLSearchParams(location.search);

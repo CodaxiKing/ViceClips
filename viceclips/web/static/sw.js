@@ -1,6 +1,7 @@
-// Service worker mínimo: torna o site instalável e mantém a casca visual disponível
-// se a rede oscilar. Sempre tenta a rede primeiro, então nunca serve arquivo velho.
-const CACHE = "viceclips-v1";
+// Service worker: torna o site instalável, mantém a casca visual disponível se a rede
+// oscilar e mostra os avisos de "clip pronto". Sempre tenta a rede primeiro, então
+// nunca serve arquivo velho.
+const CACHE = "viceclips-v2";
 const SHELL = ["/static/app.css", "/static/app.js", "/static/icon-192.png"];
 
 self.addEventListener("install", (event) => {
@@ -26,4 +27,36 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(() => caches.match(event.request)));
+});
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  event.waitUntil(self.registration.showNotification(data.title || "ViceClips", {
+    body: data.body || "",
+    icon: "/static/icon-192.png",
+    badge: "/static/icon-192.png",
+    tag: "viceclips-clip",
+    renotify: true,
+    data: { url: data.url || "/#clips" },
+  }));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data.url;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      for (const client of windows) {
+        if ("focus" in client) {
+          client.navigate(target);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(target);
+    }));
 });

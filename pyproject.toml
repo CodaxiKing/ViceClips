@@ -11,6 +11,7 @@ dependencies = [
   "fastapi",
   "uvicorn",
   "python-multipart",
+  "cryptography",
 ]
 
 [project.optional-dependencies]
@@ -28,4 +29,4 @@ build-backend = "setuptools.build_meta"
 include = ["viceclips*"]
 
 [tool.setuptools.package-data]
-viceclips = ["web/static/*"]
+viceclips = ["web/static/*", "detect/*.onnx"]

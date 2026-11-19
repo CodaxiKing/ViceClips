@@ -8,9 +8,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY viceclips ./viceclips
-RUN pip install --no-cache-dir . anthropic
+# O extra `ai` traz a transcrição local (legendas) e o cliente da Anthropic (títulos).
+RUN pip install --no-cache-dir ".[ai]"
 
-# Clips prontos e fila ficam em /data: monte um volume persistente aqui.
+# Fila, canais cadastrados, avaliações e o modelo de transcrição (baixado no primeiro clip)
+# ficam em /data: monte um volume persistente aqui.
 ENV VICECLIPS_WORK=/data/work \
     VICECLIPS_OUT=/data/out \
     PYTHONUNBUFFERED=1

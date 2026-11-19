@@ -34,7 +34,7 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 - [ ] Montar um conjunto de 20 a 30 trechos de streamers diferentes e medir o acerto da
       detecção de câmera; ajustar limiares ou trocar o detector (YuNet / MediaPipe)
 - [ ] Câmera sem moldura ou com chroma key: segmentar a pessoa em vez de procurar bordas
-- [ ] Guardar a posição da câmera por canal, para não redetectar a cada clip
+- [x] Lembrar a posição da câmera de cada live (vale quando o streamer sai da frente)
 - [ ] Validar download de trechos em Twitch, YouTube e Kick
 
 ### Fase 3: highlights melhores
@@ -61,7 +61,7 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
 
 ### Fase 4: acabamento do vídeo
 
-- [ ] Legendas palavra a palavra com destaque em rosa (como o "DOG" do exemplo)
+- [x] Legendas palavra a palavra com destaque em rosa (transcrição local)
 - [ ] Emoji no título (fonte colorida separada)
 - [ ] Intro/outro e marca d'água do canal
 - [ ] Reenquadramento dinâmico do gameplay seguindo a ação
@@ -74,11 +74,14 @@ Como a análise decide hoje (`highlights/analysis.py`, `chat.py`, `live_watch.py
 - [x] App de celular instalável (PWA) com "Compartilhar para o ViceClips" no Android
 - [x] Deploy por Docker (Coolify): `Dockerfile` e `docker-compose.yml`
 - [ ] Contas por usuário (hoje é uma senha única)
-- [ ] Notificação no celular quando um clip fica pronto
+- [x] Notificação no celular quando um clip fica pronto (Web Push)
+- [x] Clips apagados sozinhos após 10 minutos (`VICECLIPS_CLIP_TTL_MINUTES`)
+- [x] Avaliação 👍/👎 por clip, guardada para calibrar os limiares
+- [ ] Usar as avaliações para ajustar os limiares automaticamente
 - [ ] App nas lojas (Play Store / App Store), se o PWA não bastar
 - [ ] Editor de ajuste fino: arrastar o retângulo da câmera, editar título, aparar corte
 - [ ] Publicação agendada em Reels, TikTok e Shorts
-- [ ] Vários canais monitorados ao mesmo tempo
+- [x] Várias lives ao mesmo tempo e canais que começam a gravar sozinhos
 
 ## Decisões
 

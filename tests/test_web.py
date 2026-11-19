@@ -22,7 +22,7 @@ def isolated_dirs(tmp_path, monkeypatch):
 
 def test_index_and_empty_lists():
     assert client.get("/").status_code == 200
-    assert client.get("/api/live").json()["running"] is False
+    assert client.get("/api/live").json()["sessions"] == []
 
 
 @pytest.mark.parametrize("body", [
@@ -43,7 +43,7 @@ def test_no_title_without_anthropic_key(monkeypatch):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "")
-    assert pipeline._auto_title("qualquer.mp4") is None
+    assert pipeline._auto_title("qualquer.mp4", []) is None
     assert client.get("/api/session").json()["ai_titles"] is False
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
     assert client.get("/api/session").json()["ai_titles"] is True

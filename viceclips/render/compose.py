@@ -9,6 +9,7 @@ from pathlib import Path
 from .. import config
 from ..config import Rect
 from ..media import probe, run
+from .captions import subtitles_filter, write_ass
 from .title_card import render_overlay
 
 
@@ -33,7 +34,8 @@ def game_crop(src_w: int, src_h: int, target_w: int, target_h: int, cam: Rect | 
 
 
 def compose(src: str, out: str, cam: Rect | None = None,
-            title: str | None = None, credit: str | None = None) -> str:
+            title: str | None = None, credit: str | None = None,
+            words: list | None = None) -> str:
     info = probe(src)
     W, H = info["width"], info["height"]
     Path(out).parent.mkdir(parents=True, exist_ok=True)
@@ -58,7 +60,11 @@ def compose(src: str, out: str, cam: Rect | None = None,
 
     with tempfile.TemporaryDirectory() as tmp:
         overlay = render_overlay(title, credit, title_y, f"{tmp}/overlay.png")
-        graph += "[base][1:v]overlay=0:0,format=yuv420p[v]"
+        graph += "[base][1:v]overlay=0:0"
+        ass = write_ass(words, f"{tmp}/fala.ass") if words else None
+        if ass:
+            graph += "," + subtitles_filter(ass)
+        graph += ",format=yuv420p[v]"
         run(["ffmpeg", "-y", "-v", "error", "-i", src, "-i", overlay,
              "-filter_complex", graph, "-map", "[v]", "-map", "0:a?",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
