@@ -1,7 +1,7 @@
 // Service worker: torna o site instalável, mantém a casca visual disponível se a rede
 // oscilar e mostra os avisos de "clip pronto". Sempre tenta a rede primeiro, então
 // nunca serve arquivo velho.
-const CACHE = "viceclips-v2";
+const CACHE = "viceclips-v3";
 const SHELL = ["/static/app.css", "/static/app.js", "/static/icon-192.png"];
 
 self.addEventListener("install", (event) => {

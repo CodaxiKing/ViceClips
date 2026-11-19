@@ -118,7 +118,12 @@ async def require_login(request: Request, call_next):
               or (path.startswith("/api/publish/") and path.endswith("/callback")))
     if not public and not _authed(request):
         return JSONResponse({"detail": "Faça login."}, status_code=401)
-    return await call_next(request)
+    response = await call_next(request)
+    if path.startswith("/static/"):
+        # Sempre confere se o arquivo mudou: depois de uma atualização, o navegador não pode
+        # ficar com a página nova e o script antigo.
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 class Login(BaseModel):
@@ -597,7 +602,18 @@ def clips_zip(names: str = "", favorites: bool = False) -> FileResponse:
 # ---------- saúde do servidor ----------
 
 def _folder_bytes(folder: Path) -> int:
-    return sum(f.stat().st_size for f in folder.rglob("*") if f.is_file()) if folder.exists() else 0
+    """Tamanho da pasta. Arquivos temporários somem enquanto a gente conta; isso não é erro."""
+    total = 0
+    try:
+        for item in folder.rglob("*"):
+            try:
+                if item.is_file():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return total
 
 
 def _memory() -> dict:

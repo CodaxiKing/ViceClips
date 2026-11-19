@@ -460,18 +460,26 @@ $("#player-close").addEventListener("click", closePlayer);
 $("#player").addEventListener("click", (event) => { if (event.target === $("#player")) closePlayer(); });
 
 /* ---------- atualização periódica ---------- */
+let refreshCount = 0;
 async function refresh() {
-  try {
-    const [jobs, live, clips, publishing, health] = await Promise.all([
-      api("/api/jobs"), api("/api/live"), api("/api/clips"), api("/api/publish"), api("/api/health")]);
-    renderPublish(publishing);
-    renderHealth(health);
-    renderJobs(jobs);
-    renderLive(live);
-    renderClips(clips);
-  } catch {
-    /* servidor fora do ar: tenta de novo no próximo ciclo */
+  // Cada parte se atualiza sozinha: se uma falhar, as outras telas continuam funcionando.
+  const load = (path, render) => api(path).then(render).catch(() => {});
+  const jobs = [
+    load("/api/jobs", renderJobs), load("/api/live", renderLive),
+    load("/api/clips", renderClips), load("/api/publish", renderPublish),
+  ];
+  // O painel do servidor é mais pesado de calcular: só a cada 10 s, ou na hora se a tela está aberta.
+  const onServerPage = location.hash === "#servidor";
+  if (onServerPage || refreshCount % 5 === 0) {
+    jobs.push(api("/api/health").then(renderHealth).catch(() => {
+      if (onServerPage && !$("#health-tiles").children.length) {
+        $("#health-warnings").replaceChildren(el("div", { className: "alert",
+          textContent: "Não consegui ler os dados do servidor. Tentando de novo…" }));
+      }
+    }));
   }
+  refreshCount += 1;
+  await Promise.all(jobs);
 }
 
 api("/api/session").then((session) => {

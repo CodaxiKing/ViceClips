@@ -379,3 +379,25 @@ def test_hls_playlist_parsing_picks_segment_times_and_header():
     assert init == "https://cdn.x/vod/init-0.mp4"
     assert segments == [("https://cdn.x/vod/0.mp4", 0.0, 10.0), ("https://cdn.x/vod/1.mp4", 10.0, 10.0),
                         ("https://cdn.x/2.mp4", 20.0, 4.5)]
+
+
+def test_health_survives_files_vanishing_while_it_counts(monkeypatch):
+    from pathlib import Path
+
+    config.WORK_DIR.mkdir(parents=True)
+    (config.WORK_DIR / "jobs.abc.tmp").write_text("x")
+    (config.WORK_DIR / "fica.bin").write_bytes(b"12345")
+    real_stat = Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name.endswith(".tmp"):
+            raise FileNotFoundError(self)          # o arquivo temporário sumiu no meio da contagem
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    health = client.get("/api/health")
+    assert health.status_code == 200 and health.json()["disk"]["work"] == 5
+
+
+def test_static_files_are_always_revalidated():
+    assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
