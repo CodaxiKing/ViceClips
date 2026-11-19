@@ -1,0 +1,25 @@
+[project]
+name = "viceclips"
+version = "0.1.0"
+description = "Clips verticais de lives (câmera em cima, gameplay embaixo, título) para a onda de GTA VI"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "opencv-python-headless<5",  # 5.x removeu o CascadeClassifier
+  "pillow",
+  "yt-dlp",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic", "faster-whisper"]
+dev = ["pytest"]
+
+[project.scripts]
+viceclips = "viceclips.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["viceclips*"]
