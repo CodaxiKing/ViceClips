@@ -76,8 +76,13 @@ def cmd_live_clip(args) -> None:
 
 
 def cmd_web(args) -> None:
+    import os
+
     import uvicorn
 
+    if args.host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get("VICECLIPS_PASSWORD"):
+        raise SystemExit("Para abrir o site fora desta máquina, defina a senha: "
+                         "VICECLIPS_PASSWORD=... viceclips web --host 0.0.0.0")
     print(f"ViceClips em http://{args.host}:{args.port}")
     uvicorn.run("viceclips.web.app:app", host=args.host, port=args.port, log_level="warning")
 

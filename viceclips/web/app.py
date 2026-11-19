@@ -1,18 +1,24 @@
 """Interface web do ViceClips: API + página única servida em /.
 
-Um worker processa os jobs em fila (um render por vez). O estado dos jobs vive em
-memória; os clips prontos ficam em OUT_DIR com um .json (metadados) e um .jpg (capa).
+Um worker processa os jobs em fila (um render por vez). A fila é gravada em
+WORK_DIR/jobs.json e retomada quando o servidor reinicia; os clips prontos ficam em
+OUT_DIR com um .json (metadados) e um .jpg (capa).
+
+Com VICECLIPS_PASSWORD definida, tudo exige login (cookie de sessão).
 """
+import hmac
 import json
+import os
 import re
+import secrets
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,26 +38,131 @@ _lock = threading.Lock()
 _jobs: dict[str, dict] = {}
 _live: dict = {"proc": None, "url": None, "started": None}
 
+PASSWORD = os.environ.get("VICECLIPS_PASSWORD", "")
+SESSION_COOKIE = "viceclips_session"
+MAX_JOBS = 50
+_state_lock = threading.Lock()
+_login_lock = threading.Lock()
+
+
+def _jobs_file() -> Path:
+    return config.WORK_DIR / "jobs.json"
+
+
+def _sessions_file() -> Path:
+    return config.WORK_DIR / "sessions.json"
+
+
+# ---------- login ----------
+
+def _sessions() -> list[str]:
+    try:
+        return json.loads(_sessions_file().read_text())
+    except (OSError, ValueError):
+        return []
+
+
+def _authed(request: Request) -> bool:
+    if not PASSWORD:
+        return True
+    token = request.cookies.get(SESSION_COOKIE, "")
+    return bool(token) and any(hmac.compare_digest(token, t) for t in _sessions())
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    public = path in ("/", "/api/login", "/api/session") or path.startswith("/static/")
+    if not public and not _authed(request):
+        return JSONResponse({"detail": "Faça login."}, status_code=401)
+    return await call_next(request)
+
+
+class Login(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(req: Login, request: Request, response: Response) -> dict:
+    with _login_lock:  # uma tentativa por vez, com atraso: freia força bruta
+        if not PASSWORD or not hmac.compare_digest(req.password.encode(), PASSWORD.encode()):
+            time.sleep(1)
+            raise HTTPException(401, "Senha incorreta.")
+        token = secrets.token_urlsafe(32)
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        _sessions_file().write_text(json.dumps((_sessions() + [token])[-20:]))
+    response.set_cookie(SESSION_COOKIE, token, max_age=30 * 86400, httponly=True,
+                        samesite="strict", secure=request.url.scheme == "https")
+    return {"ok": True}
+
+
+@app.post("/api/logout")
+def logout(request: Request, response: Response) -> dict:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    with _login_lock:
+        _sessions_file().write_text(json.dumps([t for t in _sessions() if t != token]))
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/api/session")
+def session(request: Request) -> dict:
+    return {"auth_required": bool(PASSWORD), "authed": _authed(request)}
+
 
 # ---------- jobs ----------
 
-def _submit(kind: str, label: str, work) -> dict:
-    job = {"id": uuid.uuid4().hex[:10], "kind": kind, "label": label, "status": "fila",
-           "step": "Na fila", "error": None, "clips": [], "created": time.time()}
+def _save_jobs() -> None:
+    with _state_lock:
+        with _lock:
+            jobs = sorted(_jobs.values(), key=lambda j: j["created"])[-MAX_JOBS:]
+            for old in set(_jobs) - {j["id"] for j in jobs}:
+                del _jobs[old]
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _jobs_file().with_suffix(".tmp")
+        tmp.write_text(json.dumps(jobs))
+        tmp.replace(_jobs_file())
+
+
+def _submit(kind: str, label: str, params: dict, job_id: str | None = None) -> dict:
+    """Enfileira um job. `params` precisa ser JSON puro: é o que permite retomá-lo."""
+    job = {"id": job_id or uuid.uuid4().hex[:10], "kind": kind, "label": label,
+           "params": params, "status": "fila", "step": "Na fila", "error": None,
+           "clips": [], "created": time.time()}
     with _lock:
         _jobs[job["id"]] = job
-    _executor.submit(_run, job, work)
-    return job
+    _save_jobs()
+    _executor.submit(_run, job)
+    return _public(job)
 
 
-def _run(job: dict, work) -> None:
+def _public(job: dict) -> dict:
+    return {k: v for k, v in job.items() if k != "params"}
+
+
+def _run(job: dict) -> None:
     job["status"] = "processando"
+    _save_jobs()
     try:
-        work(job)
+        WORKERS[job["kind"]](job)
         job["status"], job["step"] = "pronto", "Pronto"
     except Exception as exc:
         job["status"], job["step"] = "erro", "Erro"
         job["error"] = str(exc)[-600:]
+    _save_jobs()
+
+
+def _resume_jobs() -> None:
+    """Recarrega a fila do disco e reenfileira o que não tinha terminado."""
+    try:
+        saved = json.loads(_jobs_file().read_text())
+    except (OSError, ValueError):
+        return
+    for job in saved:
+        _jobs[job["id"]] = job
+        if job["status"] in ("fila", "processando"):
+            job.update(status="fila", step="Na fila (retomado)", clips=[])
+            _executor.submit(_run, job)
 
 
 def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
@@ -60,7 +171,8 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
         job["step"] = text
 
     out = config.OUT_DIR / f"{name}.mp4"
-    path, title, _ = build_clip(str(src), out, title=opts.get("title"), cam=opts.get("cam"),
+    cam = Rect.parse(opts["cam"]) if opts.get("cam") else None
+    path, title, _ = build_clip(str(src), out, title=opts.get("title"), cam=cam,
                                 credit=opts.get("credit"), log=step)
     duration = probe(path)["duration"]
     out.with_suffix(".jpg").write_bytes(frame_jpeg(path, duration / 2, width=360))
@@ -71,12 +183,14 @@ def _render(job: dict, src: Path, name: str, opts: dict, source: str) -> None:
 
 
 def _options(title: str | None, credit: str | None, cam: str | None) -> dict:
+    cam = (cam or "").strip() or None
     try:
-        rect = Rect.parse(cam) if cam and cam.strip() else None
-    except ValueError:
+        if cam:
+            Rect.parse(cam)
+    except (ValueError, TypeError):
         raise HTTPException(422, "Câmera deve ser X,Y,L,A (quatro números).")
     return {"title": (title or "").strip() or None, "credit": (credit or "").strip() or None,
-            "cam": rect}
+            "cam": cam}
 
 
 def _check_url(url: str) -> str:
@@ -113,23 +227,33 @@ def create_vod(req: VodRequest) -> dict:
         if not 0 < window[1] - window[0] <= MAX_CLIP_SECONDS:
             raise HTTPException(422, f"O trecho deve ter entre 1 e {MAX_CLIP_SECONDS} segundos.")
 
-    def work(job: dict) -> None:
-        stamp = job["id"]
-        windows = [window]
-        if req.auto:
-            from ..highlights.audio import find_highlights
-            job["step"] = "Baixando áudio da live"
-            audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a")
-            job["step"] = "Procurando melhores momentos"
-            windows = [(s, e) for s, e, _ in find_highlights(str(audio), count=req.auto)]
-            if not windows:
-                raise RuntimeError("Nenhum pico de áudio encontrado; use o modo por intervalo.")
-        for i, (start, end) in enumerate(windows, 1):
-            job["step"] = f"Baixando trecho {i}/{len(windows)}"
-            raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
-            _render(job, raw, f"clip_{stamp}_{i}", opts, url)
+    return _submit("gravada", url, {"url": url, "window": window, "auto": req.auto, "opts": opts})
 
-    return _submit("gravada", url, work)
+
+def _work_vod(job: dict) -> None:
+    p, stamp = job["params"], job["id"]
+    url, windows = p["url"], [p["window"]]
+    if p["auto"]:
+        from ..highlights.audio import find_highlights
+        job["step"] = "Baixando áudio da live"
+        audio = vod.download_audio(url, config.WORK_DIR / f"vod_{stamp}.m4a")
+        job["step"] = "Procurando melhores momentos"
+        windows = [(s, e) for s, e, _ in find_highlights(str(audio), count=p["auto"])]
+        if not windows:
+            raise RuntimeError("Nenhum pico de áudio encontrado; use o modo por intervalo.")
+    for i, (start, end) in enumerate(windows, 1):
+        job["step"] = f"Baixando trecho {i}/{len(windows)}"
+        raw = vod.download_section(url, start, end, config.WORK_DIR / f"vod_{stamp}_{i}.mp4")
+        _render(job, raw, f"clip_{stamp}_{i}", p["opts"], url)
+
+
+def _work_file(job: dict) -> None:
+    """Trecho já em disco (upload ou corte da live)."""
+    p = job["params"]
+    _render(job, Path(p["raw"]), f"clip_{job['id']}", p["opts"], p["source"])
+
+
+WORKERS = {"gravada": _work_vod, "arquivo": _work_file, "ao vivo": _work_file}
 
 
 @app.post("/api/clips/upload")
@@ -146,8 +270,7 @@ def create_upload(file: UploadFile = File(...), title: str = Form(""),
         while chunk := file.file.read(1 << 20):
             fh.write(chunk)
     label = file.filename or "arquivo"
-    return _submit("arquivo", label,
-                   lambda job: _render(job, raw, f"clip_{job['id']}", opts, label))
+    return _submit("arquivo", label, {"raw": str(raw), "opts": opts, "source": label}, job_id)
 
 
 class LiveStart(BaseModel):
@@ -219,14 +342,14 @@ def live_clip(req: LiveClip) -> dict:
     job_id = uuid.uuid4().hex[:10]
     # Corta já, na requisição, para pegar o momento exato do clique.
     raw = live.cut_last(_live_dir(), req.last, config.WORK_DIR / f"live_{job_id}.mp4")
-    return _submit("ao vivo", status["url"] or "live",
-                   lambda job: _render(job, raw, f"clip_{job['id']}", opts, status["url"] or "live"))
+    source = status["url"] or "live"
+    return _submit("ao vivo", source, {"raw": str(raw), "opts": opts, "source": source}, job_id)
 
 
 @app.get("/api/jobs")
 def list_jobs() -> list[dict]:
     with _lock:
-        return sorted(_jobs.values(), key=lambda j: j["created"], reverse=True)
+        return [_public(j) for j in sorted(_jobs.values(), key=lambda j: j["created"], reverse=True)]
 
 
 @app.get("/api/clips")
@@ -266,8 +389,12 @@ def delete_clip(name: str) -> dict:
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+def index(request: Request) -> FileResponse:
+    page = "index.html" if _authed(request) else "login.html"
+    return FileResponse(STATIC / page, headers={"Cache-Control": "no-store"})
+
+
+_resume_jobs()
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

@@ -52,7 +52,9 @@ h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
 .sidebar nav a:hover { color: var(--text); background: var(--panel-2); }
 .sidebar nav a.active { color: var(--text); background: var(--pink-soft); border-left-color: var(--pink); }
 .sidebar nav a.active svg { color: var(--pink); }
-.sidebar-foot { margin-top: auto; padding: 0 12px; color: var(--muted); font-size: 13px; }
+#logout { margin: auto 12px 0; }
+#logout[hidden] + .sidebar-foot { margin-top: auto; }
+.sidebar-foot { margin-top: 16px; padding: 0 12px; color: var(--muted); font-size: 13px; }
 
 .badge {
   margin-left: auto; min-width: 22px; padding: 0 7px; border-radius: 11px;
@@ -182,3 +184,8 @@ dialog .btn { width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- login ---------- */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.login .card { width: min(380px, 100%); }
+.login .logo-lg { padding: 0; }

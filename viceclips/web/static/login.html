@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · ViceClips</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login">
+  <form class="card" id="login">
+    <div class="logo logo-lg">VICE<b>CLIPS</b></div>
+    <label>Senha
+      <input type="password" name="password" autocomplete="current-password" required autofocus>
+    </label>
+    <p class="form-error" role="alert" hidden></p>
+    <button class="btn primary" type="submit">Entrar</button>
+  </form>
+  <script>
+    const form = document.getElementById("login");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const button = form.querySelector("button");
+      const error = form.querySelector(".form-error");
+      button.disabled = true;
+      error.hidden = true;
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: form.password.value }),
+      });
+      if (res.ok) return location.reload();
+      error.textContent = res.status === 401 ? "Senha incorreta." : "Não deu para entrar. Tente de novo.";
+      error.hidden = false;
+      button.disabled = false;
+    });
+  </script>
+</body>
+</html>

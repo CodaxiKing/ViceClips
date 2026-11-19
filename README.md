@@ -41,7 +41,20 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
 - **Fila**: andamento de cada clip (um render por vez).
 - **Meus clips**: assistir, baixar e excluir os clips prontos.
 
-O servidor escuta só na própria máquina e não tem login; não o exponha na internet como está.
+A fila fica gravada em `work/jobs.json`: se o servidor reiniciar, os clips que estavam em
+andamento são retomados sozinhos.
+
+### Acesso de outros aparelhos (com senha)
+
+Por padrão o site só atende na própria máquina. Para abrir pelo celular ou hospedar, defina
+uma senha; sem ela o servidor se recusa a subir fora de `127.0.0.1`.
+
+```bash
+VICECLIPS_PASSWORD="sua-senha" viceclips web --host 0.0.0.0
+```
+
+Na internet, coloque o site atrás de HTTPS (Caddy, nginx, Cloudflare Tunnel); sem isso a
+senha trafega em texto puro.
 
 ## Uso pela linha de comando
 

@@ -54,8 +54,9 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 ### Fase 5: produto
 
 - [x] Interface web com menu lateral: novo clip, ao vivo, fila e galeria (`viceclips web`)
-- [ ] Fila persistente (hoje em memória: reiniciar o servidor esquece os jobs em andamento)
-- [ ] Login, para poder hospedar fora da própria máquina
+- [x] Fila persistente: jobs gravados em disco e retomados após reinício
+- [x] Login por senha (`VICECLIPS_PASSWORD`), exigido para atender fora da própria máquina
+- [ ] Contas por usuário (hoje é uma senha única)
 - [ ] Editor de ajuste fino: arrastar o retângulo da câmera, editar título, aparar corte
 - [ ] Publicação agendada em Reels, TikTok e Shorts
 - [ ] Vários canais monitorados ao mesmo tempo

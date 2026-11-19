@@ -14,6 +14,7 @@ async function api(path, options = {}) {
   }
   const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !path.startsWith("/api/login")) location.reload();
   if (!res.ok) {
     const detail = Array.isArray(data.detail) ? "Confira os campos preenchidos." : data.detail;
     throw new Error(detail || `Erro ${res.status}`);
@@ -227,6 +228,14 @@ async function refresh() {
     /* servidor fora do ar: tenta de novo no próximo ciclo */
   }
 }
+
+api("/api/session").then((session) => {
+  $("#logout").hidden = !session.auth_required;
+});
+$("#logout").addEventListener("click", async () => {
+  await api("/api/logout", { method: "POST" });
+  location.reload();
+});
 
 showPage();
 setInterval(refresh, 2000);
