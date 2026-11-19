@@ -104,7 +104,7 @@ onSubmit($("#form-upload"), async (data) => {
 }, "Enviando vídeo…");
 
 onSubmit($("#form-live-start"), async (data) => {
-  renderLive(await api("/api/live/start", { method: "POST", json: { url: data.get("url") } }));
+  renderLive(await api("/api/live/start", { method: "POST", json: { url: data.get("url"), auto: data.has("auto"), credit: data.get("credit") } }));
 }, "Conectando…");
 
 onSubmit($("#form-live-clip"), async (data) => {
@@ -143,6 +143,10 @@ function renderLive(live) {
   $("#live-buffer").textContent = live.buffered
     ? `${clock(live.buffered)} guardados (máximo ${clock(live.capacity)}).`
     : "Conectando à live; os primeiros segundos chegam em instantes.";
+  const n = live.auto_clips;
+  $("#live-auto").textContent = live.auto
+    ? `Clip automático ligado · ${n} clip${n === 1 ? "" : "s"} criado${n === 1 ? "" : "s"} nesta live.`
+    : "Clip automático desligado.";
   $("#live-stop").hidden = !live.running;
 }
 

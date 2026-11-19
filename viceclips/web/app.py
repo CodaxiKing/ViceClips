@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from .. import config
 from ..config import Rect
+from ..highlights.live_watch import LiveWatcher
 from ..ingest import live, vod
 from ..media import frame_jpeg, parse_time, probe
 from ..pipeline import build_clip
@@ -36,7 +37,7 @@ app = FastAPI(title="ViceClips")
 _executor = ThreadPoolExecutor(max_workers=1)
 _lock = threading.Lock()
 _jobs: dict[str, dict] = {}
-_live: dict = {"proc": None, "url": None, "started": None}
+_live: dict = {"proc": None, "url": None, "started": None, "watcher": None}
 
 PASSWORD = os.environ.get("VICECLIPS_PASSWORD", "")
 SESSION_COOKIE = "viceclips_session"
@@ -275,6 +276,8 @@ def create_upload(file: UploadFile = File(...), title: str = Form(""),
 
 class LiveStart(BaseModel):
     url: str
+    auto: bool = True      # clipar sozinho quando o áudio disparar
+    credit: str | None = None
 
 
 class LiveClip(BaseModel):
@@ -297,7 +300,9 @@ def _live_status() -> dict:
     running = bool(proc and proc.poll() is None)
     # ffmpeg saiu com erro sem gravar nada: o link não é uma live que dê para ler.
     failed = bool(proc and not running and proc.returncode and buffered == 0)
+    watcher = _live["watcher"]
     return {"running": running, "failed": failed, "url": _live["url"],
+            "auto": bool(watcher), "auto_clips": watcher.clips if watcher else 0,
             "started": _live["started"], "buffered": round(buffered),
             "capacity": live.SEGMENT_SECONDS * live.BUFFER_SEGMENTS}
 
@@ -318,7 +323,12 @@ def live_start(req: LiveStart) -> dict:
         _live["proc"] = live.record(url, _live_dir())
     except RuntimeError as exc:
         raise HTTPException(502, str(exc))
-    _live.update(url=url, started=time.time())
+    _live.update(url=url, started=time.time(), watcher=None)
+    if req.auto:
+        opts = _options(None, req.credit, None)
+        _live["watcher"] = LiveWatcher(
+            _live_dir(), lambda seconds: _clip_from_live(min(seconds, MAX_CLIP_SECONDS), opts))
+        _live["watcher"].start()
     return _live_status()
 
 
@@ -328,7 +338,17 @@ def live_stop() -> dict:
     if proc and proc.poll() is None:
         proc.terminate()
         proc.wait(timeout=10)
+    if _live["watcher"]:
+        _live["watcher"].stop()
     return _live_status()
+
+
+def _clip_from_live(seconds: float, opts: dict) -> dict:
+    """Corta os últimos `seconds` do buffer e enfileira o render."""
+    job_id = uuid.uuid4().hex[:10]
+    raw = live.cut_last(_live_dir(), seconds, config.WORK_DIR / f"live_{job_id}.mp4")
+    source = _live["url"] or "live"
+    return _submit("ao vivo", source, {"raw": str(raw), "opts": opts, "source": source}, job_id)
 
 
 @app.post("/api/live/clip")
@@ -338,12 +358,8 @@ def live_clip(req: LiveClip) -> dict:
         raise HTTPException(422, f"Escolha entre 1 e {MAX_CLIP_SECONDS} segundos.")
     if status["buffered"] < 1:
         raise HTTPException(409, "O buffer ainda está vazio; aguarde alguns segundos.")
-    opts = _options(req.title, req.credit, req.cam)
-    job_id = uuid.uuid4().hex[:10]
     # Corta já, na requisição, para pegar o momento exato do clique.
-    raw = live.cut_last(_live_dir(), req.last, config.WORK_DIR / f"live_{job_id}.mp4")
-    source = status["url"] or "live"
-    return _submit("ao vivo", source, {"raw": str(raw), "opts": opts, "source": source}, job_id)
+    return _clip_from_live(req.last, _options(req.title, req.credit, req.cam))
 
 
 @app.get("/api/jobs")

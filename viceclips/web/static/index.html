@@ -37,7 +37,7 @@
     <!-- Novo clip -->
     <section class="page" id="page-novo">
       <h1>Novo clip</h1>
-      <p class="lead">Cole o link de uma live gravada ou envie um trecho do seu computador.</p>
+      <p class="lead">Cole o link de uma live gravada e receba os melhores momentos em clips prontos.</p>
 
       <div class="tabs" role="tablist">
         <button role="tab" class="tab active" data-tab="link" aria-selected="true">Link da live</button>
@@ -51,11 +51,11 @@
 
         <fieldset class="segmented">
           <legend>Como escolher o momento</legend>
-          <label><input type="radio" name="mode" value="range" checked><span>Por intervalo</span></label>
-          <label><input type="radio" name="mode" value="auto"><span>Automático</span></label>
+          <label><input type="radio" name="mode" value="auto" checked><span>Melhores momentos</span></label>
+          <label><input type="radio" name="mode" value="range"><span>Por intervalo</span></label>
         </fieldset>
 
-        <div class="row" id="range-fields">
+        <div class="row" id="range-fields" hidden>
           <label>Início
             <input name="start" placeholder="1:23:45" inputmode="numeric">
           </label>
@@ -63,11 +63,11 @@
             <input name="end" placeholder="1:24:30" inputmode="numeric">
           </label>
         </div>
-        <div id="auto-fields" hidden>
+        <div id="auto-fields">
           <label>Quantos clips
-            <input type="number" name="auto" min="1" max="10" value="3">
+            <input type="number" name="auto" min="1" max="10" value="5">
           </label>
-          <p class="hint">Acha os momentos mais barulhentos da live (gritos, risadas). Baixa o áudio inteiro antes, então demora mais.</p>
+          <p class="hint">Procura na live inteira os momentos em que o streamer mais reage (gritos, risadas, sustos) e faz um clip de cada. Cada clip ganha o próprio título.</p>
         </div>
 
         <div class="shared-fields"></div>
@@ -89,11 +89,16 @@
     <!-- Ao vivo -->
     <section class="page" id="page-aovivo" hidden>
       <h1>Ao vivo</h1>
-      <p class="lead">O ViceClips acompanha a live e guarda os últimos 10 minutos. Aconteceu algo? Clipe na hora.</p>
+      <p class="lead">O ViceClips acompanha a live, clipa sozinho quando o streamer reage forte e guarda os últimos 10 minutos para você clipar na hora.</p>
 
       <form class="card" id="form-live-start">
         <label>Link da live
           <input type="url" name="url" placeholder="https://www.twitch.tv/canal" required>
+        </label>
+        <label class="check"><input type="checkbox" name="auto" checked>
+          <span>Clipar sozinho os melhores momentos</span></label>
+        <label><span>Crédito do streamer <span class="opt">opcional</span></span>
+          <input name="credit" maxlength="30" placeholder="@canal">
         </label>
         <p class="form-error" role="alert" hidden></p>
         <button class="btn primary" type="submit">Começar a acompanhar</button>
@@ -106,6 +111,7 @@
         </div>
         <div class="meter" aria-hidden="true"><div id="live-meter"></div></div>
         <p class="hint" id="live-buffer"></p>
+        <p class="hint" id="live-auto"></p>
 
         <form id="form-live-clip">
           <fieldset class="segmented">

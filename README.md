@@ -36,8 +36,11 @@ viceclips web
 
 Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
 
-- **Novo clip**: cole o link de uma live gravada (por intervalo ou automático) ou envie um arquivo.
-- **Ao vivo**: cole o link da live; o sistema guarda os últimos 10 minutos e você clipa na hora.
+- **Novo clip**: cole o link de uma live gravada. No modo "Melhores momentos" (padrão) o sistema
+  varre a live inteira e entrega um clip para cada momento em que o streamer mais reage; no modo
+  "Por intervalo" você informa início e fim. Também aceita um arquivo de vídeo.
+- **Ao vivo**: cole o link da live. O sistema clipa sozinho quando o áudio dispara (grito, risada,
+  susto) e guarda os últimos 10 minutos para você clipar na hora com um botão.
 - **Fila**: andamento de cada clip (um render por vez).
 - **Meus clips**: assistir, baixar e excluir os clips prontos.
 
@@ -90,7 +93,8 @@ viceclips/
   ingest/vod.py        download de trechos de lives gravadas (yt-dlp)
   ingest/live.py       buffer circular da live + corte dos últimos N segundos
   detect/webcam.py     localização da facecam (rosto estável + bordas fixas)
-  highlights/audio.py  candidatos a clip por pico de áudio
+  highlights/audio.py  candidatos a clip por pico de áudio (live gravada)
+  highlights/live_watch.py  clip automático na live ao vivo
   ai/transcribe.py     transcrição da fala (faster-whisper)
   ai/title.py          título curto a partir de frames + transcrição (Claude)
   render/title_card.py overlay PNG: título, faixa rosa, crédito

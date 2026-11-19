@@ -41,7 +41,7 @@ link ──> ingestão ──> seleção do momento ──> detecção da câmer
 
 - [ ] Pico de mensagens no chat (Twitch IRC / chat replay do YouTube)
 - [ ] Palavras-gatilho na transcrição ("no way", "meu deus", risadas)
-- [ ] Na live ao vivo: disparo automático do `live-clip` quando o score passar do limiar
+- [x] Na live ao vivo: clip automático quando o áudio dispara (interface web)
 - [ ] IA para ranquear os candidatos e ajustar início e fim do corte
 
 ### Fase 4: acabamento do vídeo
