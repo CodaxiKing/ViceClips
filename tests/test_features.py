@@ -231,3 +231,47 @@ def test_push_subscription_lifecycle_and_expired_ones_are_dropped(monkeypatch):
     push.notify("Clip pronto", "teste")
     assert len(sent) == 1 and sent[0][1] == {"title": "Clip pronto", "body": "teste", "url": "/#clips"}
     assert [s["endpoint"].rsplit("/", 1)[-1] for s in push.subscriptions()] == ["vivo"]
+
+
+# ---------- legenda só do streamer ----------
+
+def test_speech_is_grouped_into_blocks_split_by_pauses_and_length():
+    from viceclips.ai.transcribe import speech_blocks
+
+    spans = [(0.0, 2.0), (2.5, 4.0), (6.0, 7.0), (7.2, 14.0), (14.5, 23.0)]
+    assert speech_blocks(spans) == [(0.0, 4.0), (6.0, 14.0), (14.5, 23.0)]
+
+
+def test_only_speech_in_the_streamer_language_becomes_caption(monkeypatch):
+    import numpy as np
+    from viceclips.ai import transcribe as t
+
+    class Segment:
+        no_speech_prob = 0.0
+
+        def __init__(self, text):
+            self.words = [type("W", (), {"word": text, "start": 0.5, "end": 0.9, "probability": 0.9})()]
+
+    class FakeModel:
+        def detect_language(self, chunk):
+            # o "jogo" é o bloco mais alto; o streamer, o mais baixo
+            lang = "en" if float(np.abs(chunk).max()) > 0.5 else "pt"
+            return lang, 0.95, [(lang, 0.95), ("pt" if lang == "en" else "en", 0.02)]
+
+        def transcribe(self, chunk, language=None, **_):
+            assert language == "pt"
+            return [Segment("oi")], None
+
+    monkeypatch.setattr(t, "available", lambda: True)
+    monkeypatch.setattr(t, "_load", lambda: FakeModel())
+    monkeypatch.setattr(t, "_speech_spans", lambda audio: [(1.0, 3.0), (6.0, 8.0)])
+    audio = np.full(10 * t.RATE, 0.1, np.float32)
+    audio[5 * t.RATE:] = 0.9                                    # segundo bloco: fala do jogo
+    monkeypatch.setattr(t, "_audio", lambda path: audio)
+
+    words = t.transcribe_words("clip.mp4")
+    assert [(w.text, round(w.start, 1)) for w in words] == [("oi", 1.3)]   # só o bloco em português
+
+    monkeypatch.setattr(t, "CAPTION_LANG", "")                  # filtro desligado: legenda tudo
+    monkeypatch.setattr(FakeModel, "transcribe", lambda self, chunk, language=None, **_: ([Segment("x")], None))
+    assert len(t.transcribe_words("clip.mp4")) == 2

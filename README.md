@@ -47,13 +47,15 @@ Abra http://127.0.0.1:8000. O menu lateral tem quatro telas:
   10 minutos depois de pronto; as avaliações ficam guardadas em `work/ratings.jsonl`.
 
 Os clips saem com legenda palavra por palavra (a palavra falada fica em rosa), feita por
-transcrição local, sem API. O botão "Ativar avisos" no menu manda uma notificação para o
+transcrição local, sem API. Só a fala do streamer é legendada: o diálogo do jogo, em
+inglês, é descartado pelo idioma. O botão "Ativar avisos" no menu manda uma notificação para o
 celular quando um clip fica pronto.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
 | `VICECLIPS_CLIP_TTL_MINUTES` | `10` | minutos até apagar um clip pronto (`0` = nunca) |
 | `VICECLIPS_CAPTIONS` | `1` | `0` desliga as legendas |
+| `VICECLIPS_CAPTION_LANG` | `pt` | idioma do streamer; só fala nesse idioma vira legenda (vazio = legenda tudo) |
 | `VICECLIPS_WHISPER_MODEL` | `small` | modelo de transcrição (`tiny`, `base`, `small`, `medium`) |
 | `VICECLIPS_MAX_LIVES` | `4` | lives acompanhadas ao mesmo tempo |
 
